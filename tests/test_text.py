@@ -58,3 +58,9 @@ class TestCleanProject:
         original = {"id": "p1", "name": "\U0001f4bcWork"}
         clean_project(original)
         assert original["name"] == "\U0001f4bcWork"
+
+    def test_returns_copy_even_without_string_name(self):
+        original = {"id": "p1"}
+        result = clean_project(original)
+        assert result == original
+        assert result is not original

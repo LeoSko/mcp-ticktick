@@ -15,9 +15,12 @@ _EMOJI_CONT = {"So", "Sk", "Cf", "Mn", "Me"}
 def strip_leading_emoji(name: str) -> str:
     """Remove a leading emoji icon (and any following whitespace) from a name.
 
-    No-op when the name does not start with an emoji, so a plain name keeps its
-    exact text (including any legitimate leading space). Inline emoji are kept.
-    Falls back to the original if stripping would leave an empty string.
+    An icon is a leading run that starts with a pictograph (Unicode category
+    ``So``) or symbol modifier (``Sk``); sequences that start with plain text —
+    including keycap digits such as ``1️⃣`` — are therefore left intact.
+    No-op when the name has no such leading icon, so a plain name keeps its exact
+    text (including any legitimate leading space). Inline emoji are kept. Falls
+    back to the original if stripping would leave an empty string.
     """
     if not name or unicodedata.category(name[0]) not in _EMOJI_START:
         return name
@@ -31,8 +34,12 @@ def strip_leading_emoji(name: str) -> str:
 
 
 def clean_project(project: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy of a project dict with its ``name`` icon stripped."""
+    """Return a copy of a project dict with its ``name`` icon stripped.
+
+    Always returns a new dict; a missing or non-string ``name`` is copied through
+    unchanged so callers never receive the original object.
+    """
     name = project.get("name")
     if isinstance(name, str):
         return {**project, "name": strip_leading_emoji(name)}
-    return project
+    return {**project}
