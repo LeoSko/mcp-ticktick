@@ -19,11 +19,12 @@ def strip_leading_emoji(name: str) -> str:
     """Remove a leading emoji icon (and any following whitespace) from a name.
 
     An icon is a leading run that starts with a pictograph (Unicode category
-    ``So``) or symbol modifier (``Sk``); sequences that start with plain text —
-    including keycap digits such as ``1️⃣`` — are therefore left intact.
-    No-op when the name has no such leading icon, so a plain name keeps its exact
-    text (including any legitimate leading space). Inline emoji are kept. Falls
-    back to the original if stripping would leave an empty string.
+    ``So``); sequences that start with plain text — including symbols in category
+    ``Sk`` such as ``^`` and keycap digits like ``1`` + U+FE0F + U+20E3 — are
+    therefore left intact. No-op when the name has no such leading icon, so a
+    plain name keeps its exact text (including any legitimate leading space).
+    Inline emoji are kept. Falls back to the original if stripping would leave an
+    empty string.
     """
     if not name or unicodedata.category(name[0]) not in _EMOJI_START:
         return name
