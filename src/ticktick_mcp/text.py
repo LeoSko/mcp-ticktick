@@ -3,12 +3,15 @@ from __future__ import annotations
 import unicodedata
 from typing import Any
 
-# A list icon begins with a pictograph (So) or symbol modifier (Sk). The run may
-# continue through joiners/modifiers: ZWJ (Cf), variation selectors (Mn), and
-# keycap enclosers (Me). Keying off Unicode category — rather than fixed ranges —
-# covers every emoji regardless of Unicode version. Real text (letters Lu/Ll,
+# A list icon begins with a pictograph (Unicode category So). The run may then
+# continue through joiners/modifiers: skin-tone modifiers (Sk), ZWJ (Cf),
+# variation selectors (Mn), and keycap enclosers (Me). Keying off category —
+# rather than fixed ranges — covers every emoji regardless of Unicode version.
+# Sk is deliberately NOT a start category: skin-tone modifiers never lead a
+# sequence, and Sk also contains plain text symbols like "^" (U+005E) and "`"
+# (U+0060) that must not be mistaken for an icon. Real text (letters Lu/Ll,
 # other letters Lo like CJK, digits Nd) is never in these sets, so it is kept.
-_EMOJI_START = {"So", "Sk"}
+_EMOJI_START = {"So"}
 _EMOJI_CONT = {"So", "Sk", "Cf", "Mn", "Me"}
 
 

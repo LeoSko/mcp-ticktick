@@ -15,25 +15,29 @@ class TestStripLeadingEmoji:
             # Leading icon followed by space(s)
             ("\U0001f4bc Work", "Work"),
             ("\U0001f4d6  Study", "Study"),
-            ("\U0001f4d6 Study", "Study"),  # non-breaking space
+            ("\U0001f4d6\u00a0Study", "Study"),  # non-breaking space
             # Multiple stacked leading icons
             ("\U0001f4d6\U0001f4daStudy", "Study"),
             # ZWJ multi-codepoint sequence (family)
-            ("\U0001f468‍\U0001f469‍\U0001f467Home", "Home"),
+            ("\U0001f468\u200d\U0001f469\u200d\U0001f467Home", "Home"),
             # Flag (two regional indicators)
             ("\U0001f1fa\U0001f1f8USA", "USA"),
-            # Variation selector emoji
-            ("❤️Love", "Love"),
+            # Variation selector emoji (heart + U+FE0F)
+            ("\u2764\ufe0fLove", "Love"),
             # No emoji — unchanged, no space eaten
             ("ZZTempNoIcon", "ZZTempNoIcon"),
             ("Work", "Work"),
             (" Leading space kept", " Leading space kept"),
             # Non-Latin text preserved
             ("学习", "学习"),
+            # Leading category-Sk symbols are text, not icons — untouched
+            ("^Important", "^Important"),
+            ("`Notes", "`Notes"),
+            ("´Accent", "´Accent"),  # U+00B4 ACUTE ACCENT (category Sk)
             # Inline emoji preserved (leading-only policy)
             ("Study \U0001f4d6", "Study \U0001f4d6"),
-            # Leading digit is text, not an icon — untouched
-            ("1️⃣Priority", "1️⃣Priority"),
+            # Leading keycap digit (1 + U+FE0F + U+20E3) is text-led — untouched
+            ("1\ufe0f\u20e3Priority", "1\ufe0f\u20e3Priority"),
             # Emoji-only name falls back to the original
             ("\U0001f4d6", "\U0001f4d6"),
             # Empty string
