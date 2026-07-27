@@ -39,10 +39,10 @@ def session_cookie_instructions() -> str:
         "1. Sign in at https://ticktick.com and open browser developer tools.\n"
         "2. Open Network, select an api.ticktick.com request, and copy its Cookie "
         "request header.\n"
-        "3. Run `mcp-ticktick session` and paste that header. The helper extracts "
-        "the `t` cookie and stores it securely.\n"
+        "3. Paste that header at the waiting prompt. The helper extracts the `t` "
+        "cookie and stores it securely.\n"
         "You can also paste only the value of the `t` cookie from Application/Storage "
-        "-> Cookies."
+        "-> Cookies. Run `mcp-ticktick session` later to refresh an expired cookie."
     )
 
 
@@ -111,6 +111,21 @@ def login(args: argparse.Namespace) -> None:
         f"OAuth authentication complete. Credentials saved to {credentials_path}\n\n"
         f"{session_cookie_instructions()}"
     )
+    if args.skip_session:
+        print("Browser session setup skipped. Run `mcp-ticktick session` later.")
+        return
+
+    raw_value = getpass.getpass(
+        "Paste the `t` cookie value or full Cookie header (press Enter to skip): "
+    )
+    if not raw_value.strip():
+        print("Browser session setup skipped. Run `mcp-ticktick session` later.")
+        return
+    try:
+        save_session_token(raw_value, credentials_path)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"OAuth and browser session credentials saved to {credentials_path}")
 
 
 def store_session(args: argparse.Namespace) -> None:
@@ -145,6 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     login_parser.add_argument("--timeout", type=float, default=300)
     login_parser.add_argument("--no-browser", action="store_true")
+    login_parser.add_argument(
+        "--skip-session",
+        action="store_true",
+        help="Skip browser session setup after OAuth login",
+    )
     session_parser = subparsers.add_parser(
         "session", help="Store the browser session cookie for private v2/v3 APIs"
     )

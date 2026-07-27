@@ -68,3 +68,33 @@ async def test_oauth_login_preserves_stored_session(tmp_path: Path, mock_api: re
         "client_secret": "client-secret",
         "access_token": "access-token",
     }
+
+
+def test_login_stores_oauth_and_session_in_one_run(monkeypatch, tmp_path: Path, capsys):
+    credentials_path = tmp_path / "credentials.json"
+    args = build_parser().parse_args(
+        [
+            "login",
+            "--client-id",
+            "client-id",
+            "--credentials-file",
+            str(credentials_path),
+        ]
+    )
+
+    async def fake_exchange_and_save(*exchange_args):
+        save_credentials({"access_token": "access-token"}, credentials_path)
+        return credentials_path
+
+    monkeypatch.setenv("TICKTICK_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(cli, "wait_for_authorization_code", lambda *args, **kwargs: "code")
+    monkeypatch.setattr(cli, "_exchange_and_save", fake_exchange_and_save)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "foo=bar; t=session-token")
+
+    cli.login(args)
+
+    assert load_credentials(credentials_path) == {
+        "access_token": "access-token",
+        "session_token": "session-token",
+    }
+    assert "OAuth and browser session credentials saved" in capsys.readouterr().out

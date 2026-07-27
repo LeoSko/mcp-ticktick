@@ -23,13 +23,12 @@ Tasks, projects, habits, focus timers, tags, filters, and calendars.
 ```bash
 pip install mcp-ticktick
 mcp-ticktick login
-mcp-ticktick session
 ```
 
-The login command walks you through creating a TickTick OAuth app. The session
-helper accepts either the browser's `t` cookie value or a copied Cookie request
-header and stores both credentials locally. Then add the server to your AI client
-of choice:
+The login command walks you through creating a TickTick OAuth app, then accepts
+either the browser's `t` cookie value or a copied Cookie request header. It stores
+both credentials locally in one run. Then add the server to your AI client of
+choice:
 
 <details>
 <summary><strong>Claude Desktop</strong></summary>
@@ -251,12 +250,13 @@ mcp-ticktick login
 
 The command prints the setup steps, prompts for the app's client ID and secret,
 opens TickTick authorization in your browser, validates the loopback callback,
-and exchanges the authorization code. It stores the resulting credentials at
-`~/.config/mcp-ticktick/credentials.json` with owner-only permissions, then
-prints the browser-session setup steps.
+and exchanges the authorization code. It then prompts for the browser session
+cookie and stores both credentials at
+`~/.config/mcp-ticktick/credentials.json` with owner-only permissions.
 
 Use `--no-browser` to print the authorization URL without opening it, or
-`--credentials-file PATH` to choose another credential file.
+`--credentials-file PATH` to choose another credential file. Use
+`--skip-session` for OAuth-only setup.
 
 ### Browser session cookie
 
@@ -267,11 +267,13 @@ To enable private v2/v3 features:
 2. In **Network**, select an `api.ticktick.com` request and copy its Cookie
    request header. Alternatively, copy the value of `t` from
    **Application/Storage → Cookies**.
-3. Run `mcp-ticktick session` and paste what you copied.
+3. Return to the waiting `mcp-ticktick login` prompt and paste what you copied.
 
-The helper extracts `t` from a full Cookie header and adds it to the same
-owner-only credential file without overwriting OAuth credentials. For scripts,
-pipe the value or header to `mcp-ticktick session --stdin`.
+The login flow extracts `t` from a full Cookie header and adds it to the same
+owner-only credential file without overwriting OAuth credentials. The standalone
+`mcp-ticktick session` command refreshes an expired cookie without repeating
+OAuth. For scripts, pipe the value or header to
+`mcp-ticktick session --stdin`.
 
 The cookie expires independently; repeat the session step when the server reports
 that the v2 session is invalid. Treat it like a password: do not commit it, paste
