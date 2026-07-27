@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from unittest.mock import patch
 
 import pytest
@@ -17,7 +18,7 @@ def mock_api():
 
 
 @pytest.fixture
-async def client(mock_api: respx.MockRouter) -> TickTickClient:
+async def client(mock_api: respx.MockRouter) -> AsyncIterator[TickTickClient]:
     """TickTickClient with fake credentials, ready for testing."""
     c = TickTickClient(
         access_token="test-access-token",

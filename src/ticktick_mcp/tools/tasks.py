@@ -48,6 +48,45 @@ async def _get_inbox_id(client: TickTickClient) -> str:
     return inbox_id
 
 
+async def _edit_recurring_task(
+    client: TickTickClient,
+    task_id: str,
+    project_id: str,
+    updates: dict[str, Any],
+    repeat: str | None,
+    clear_repeat: bool,
+) -> dict[str, Any]:
+    """Update recurrence through the v2 batch endpoint used by the web UI."""
+    task = await client.v1_get(f"/project/{project_id}/task/{task_id}")
+    task.update({key: value for key, value in updates.items() if key != "taskId"})
+    task["id"] = task_id
+    task["projectId"] = project_id
+
+    if clear_repeat:
+        task["repeatFlag"] = ""
+        task["repeatFirstDate"] = None
+    else:
+        if repeat is None or not repeat.upper().startswith("RRULE:"):
+            raise ToolError("Repeat must be an RRULE string beginning with 'RRULE:'")
+        first_date = task.get("startDate") or task.get("dueDate")
+        if not first_date:
+            raise ToolError("A repeating task requires a start or due date")
+        task["repeatFlag"] = repeat
+        task["repeatFirstDate"] = first_date
+        task.setdefault("repeatFrom", "1")
+
+    payload = {
+        "add": [],
+        "update": [task],
+        "delete": [],
+        "addAttachments": [],
+        "updateAttachments": [],
+        "deleteAttachments": [],
+    }
+    await client.v2_post("/batch/task", payload)
+    return task
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(
         annotations={
@@ -252,10 +291,13 @@ def register(mcp: FastMCP) -> None:
         clear_due: bool = False,
         clear_start: bool = False,
         timezone: str | None = None,
+        repeat: str | None = None,
+        clear_repeat: bool = False,
     ) -> dict[str, Any]:
         """Update an existing task.
 
         Only provided fields are changed. Use clear_due/clear_start to remove dates.
+        Recurrence changes require a v2 session token.
 
         Args:
             task_id: The task ID to edit.
@@ -270,10 +312,15 @@ def register(mcp: FastMCP) -> None:
             clear_due: Set to true to remove the due date.
             clear_start: Set to true to remove the start date.
             timezone: IANA timezone for date interpretation.
+            repeat: New RFC 5545 RRULE, including the "RRULE:" prefix.
+            clear_repeat: Set to true to make the task non-repeating.
         """
         client = _get_client(ctx)
         pid = await _resolve_project_id(client, project)
         body: dict[str, Any] = {"taskId": task_id, "projectId": pid}
+
+        if repeat is not None and clear_repeat:
+            raise ToolError("Use either repeat or clear_repeat, not both")
 
         if title is not None:
             body["title"] = title
@@ -305,6 +352,11 @@ def register(mcp: FastMCP) -> None:
 
         if timezone:
             body["timeZone"] = timezone
+
+        if repeat is not None or clear_repeat:
+            return await _edit_recurring_task(
+                client, task_id, pid, body, repeat, clear_repeat
+            )
 
         return await client.v1_post(f"/task/{task_id}", body)
 
