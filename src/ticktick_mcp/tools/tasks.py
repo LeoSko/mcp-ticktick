@@ -48,7 +48,7 @@ async def _get_inbox_id(client: TickTickClient) -> str:
     return inbox_id
 
 
-async def _edit_recurring_task(
+async def _edit_task_v2(
     client: TickTickClient,
     task_id: str,
     project_id: str,
@@ -56,17 +56,17 @@ async def _edit_recurring_task(
     repeat: str | None,
     clear_repeat: bool,
 ) -> dict[str, Any]:
-    """Update recurrence through the v2 batch endpoint used by the web UI."""
+    """Update a task through the v2 batch endpoint used by the web UI."""
     task = await client.v1_get(f"/project/{project_id}/task/{task_id}")
     task.update({key: value for key, value in updates.items() if key != "taskId"})
     task["id"] = task_id
     task["projectId"] = project_id
 
     if clear_repeat:
-        task["repeatFlag"] = ""
-        task["repeatFirstDate"] = None
-    else:
-        if repeat is None or not repeat.upper().startswith("RRULE:"):
+        task["repeatFlag"] = None
+        task["repeatFirstDate"] = task.get("startDate") or task.get("dueDate")
+    elif repeat is not None:
+        if not repeat.upper().startswith("RRULE:"):
             raise ToolError("Repeat must be an RRULE string beginning with 'RRULE:'")
         first_date = task.get("startDate") or task.get("dueDate")
         if not first_date:
@@ -74,6 +74,9 @@ async def _edit_recurring_task(
         task["repeatFlag"] = repeat
         task["repeatFirstDate"] = first_date
         task.setdefault("repeatFrom", "1")
+
+    if "startDate" in updates or "dueDate" in updates:
+        task["repeatFirstDate"] = task.get("startDate") or task.get("dueDate")
 
     payload = {
         "add": [],
@@ -297,7 +300,8 @@ def register(mcp: FastMCP) -> None:
         """Update an existing task.
 
         Only provided fields are changed. Use clear_due/clear_start to remove dates.
-        Recurrence changes require a v2 session token.
+        Requires a v2 session token because TickTick's v1 edit endpoint does not
+        reliably persist changes.
 
         Args:
             task_id: The task ID to edit.
@@ -353,12 +357,7 @@ def register(mcp: FastMCP) -> None:
         if timezone:
             body["timeZone"] = timezone
 
-        if repeat is not None or clear_repeat:
-            return await _edit_recurring_task(
-                client, task_id, pid, body, repeat, clear_repeat
-            )
-
-        return await client.v1_post(f"/task/{task_id}", body)
+        return await _edit_task_v2(client, task_id, pid, body, repeat, clear_repeat)
 
     @mcp.tool(
         annotations={

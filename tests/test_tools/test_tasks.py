@@ -7,7 +7,7 @@ import pytest
 import respx
 
 from ticktick_mcp.client import V1_BASE, V2_BASE, TickTickClient
-from ticktick_mcp.tools.tasks import _edit_recurring_task
+from ticktick_mcp.tools.tasks import _edit_task_v2
 
 
 class TestListTasks:
@@ -45,7 +45,75 @@ class TestAddTask:
         assert result["title"] == "Buy milk"
 
 
-class TestEditRecurringTask:
+class TestEditTask:
+    @pytest.mark.anyio
+    async def test_updates_regular_fields_through_batch_endpoint(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "t1",
+                    "projectId": "p1",
+                    "title": "Old title",
+                    "startDate": "2026-07-27T21:00:00.000+0000",
+                    "repeatFlag": "RRULE:FREQ=DAILY;INTERVAL=14",
+                },
+            )
+        )
+        route = mock_api.post(f"{V2_BASE}/batch/task").mock(
+            return_value=httpx.Response(200, json={"id2etag": {"t1": "new-etag"}})
+        )
+
+        result = await _edit_task_v2(
+            client,
+            "t1",
+            "p1",
+            {"taskId": "t1", "projectId": "p1", "title": "New title"},
+            None,
+            False,
+        )
+
+        assert result["title"] == "New title"
+        assert result["repeatFlag"] == "RRULE:FREQ=DAILY;INTERVAL=14"
+        payload = json.loads(route.calls.last.request.content)
+        assert payload["update"][0]["title"] == "New title"
+
+    @pytest.mark.anyio
+    async def test_updates_repeat_first_date_with_task_date(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "t1",
+                    "projectId": "p1",
+                    "title": "Task",
+                    "startDate": "2026-07-27T21:00:00.000+0000",
+                    "repeatFirstDate": "2026-07-27T21:00:00.000+0000",
+                },
+            )
+        )
+        mock_api.post(f"{V2_BASE}/batch/task").mock(return_value=httpx.Response(200, json={}))
+
+        result = await _edit_task_v2(
+            client,
+            "t1",
+            "p1",
+            {
+                "taskId": "t1",
+                "projectId": "p1",
+                "startDate": "2026-07-29T21:00:00.000+0000",
+                "dueDate": None,
+            },
+            None,
+            False,
+        )
+
+        assert result["repeatFirstDate"] == "2026-07-29T21:00:00.000+0000"
+
     @pytest.mark.anyio
     async def test_updates_repeat_through_batch_endpoint(
         self, client: TickTickClient, mock_api: respx.MockRouter
@@ -67,7 +135,7 @@ class TestEditRecurringTask:
             return_value=httpx.Response(200, json={"id2etag": {"t1": "new-etag"}})
         )
 
-        result = await _edit_recurring_task(
+        result = await _edit_task_v2(
             client,
             "t1",
             "p1",
@@ -100,7 +168,7 @@ class TestEditRecurringTask:
         )
         mock_api.post(f"{V2_BASE}/batch/task").mock(return_value=httpx.Response(200, json={}))
 
-        result = await _edit_recurring_task(
+        result = await _edit_task_v2(
             client,
             "t1",
             "p1",
@@ -109,8 +177,8 @@ class TestEditRecurringTask:
             True,
         )
 
-        assert result["repeatFlag"] == ""
-        assert result["repeatFirstDate"] is None
+        assert result["repeatFlag"] is None
+        assert result["repeatFirstDate"] == "2026-07-27T21:00:00.000+0000"
 
 
 class TestCompleteTask:
