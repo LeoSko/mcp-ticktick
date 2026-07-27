@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import copy
 import json
 import logging
 import time
@@ -78,6 +80,9 @@ class TickTickClient:
         self._device_id = generate_device_id()
         self._http: httpx.AsyncClient | None = None
         self._inbox_project_id: str | None = None
+        self._sync_checkpoint: int | None = None
+        self._sync_snapshot: dict[str, Any] = {}
+        self._sync_lock = asyncio.Lock()
 
     async def __aenter__(self) -> TickTickClient:
         self._http = httpx.AsyncClient(timeout=30.0)
@@ -210,6 +215,109 @@ class TickTickClient:
     # v3 / batch check
     # ------------------------------------------------------------------
 
+    async def v3_get(self, endpoint: str) -> Any:
+        resp = await self.http.get(f"{V3_BASE}{endpoint}", headers=self._v2_headers())
+        self._check_v2_response(resp)
+        return resp.json()
+
+    @staticmethod
+    def _item_key(item: Any, keys: tuple[str, ...]) -> str | None:
+        if isinstance(item, str):
+            return item
+        if not isinstance(item, dict):
+            return None
+        for key in keys:
+            value = item.get(key)
+            if value is not None:
+                return str(value)
+        return None
+
+    @classmethod
+    def _merge_items(
+        cls,
+        current: list[Any],
+        changes: list[Any],
+        keys: tuple[str, ...],
+    ) -> list[Any]:
+        merged = {key: item for item in current if (key := cls._item_key(item, keys)) is not None}
+        for item in changes:
+            key = cls._item_key(item, keys)
+            if key is None:
+                continue
+            if isinstance(item, dict) and item.get("deleted"):
+                merged.pop(key, None)
+            else:
+                merged[key] = item
+        return list(merged.values())
+
+    def _merge_sync_delta(self, delta: dict[str, Any]) -> None:
+        collection_keys = {
+            "projectProfiles": ("id",),
+            "projectGroups": ("id",),
+            "filters": ("id",),
+            "tags": ("name", "label"),
+        }
+        for name, keys in collection_keys.items():
+            changes = delta.get(name)
+            if isinstance(changes, list):
+                current = self._sync_snapshot.get(name)
+                self._sync_snapshot[name] = self._merge_items(
+                    current if isinstance(current, list) else [],
+                    changes,
+                    keys,
+                )
+
+        task_delta = delta.get("syncTaskBean")
+        if isinstance(task_delta, dict):
+            current_bean = self._sync_snapshot.get("syncTaskBean")
+            current_tasks = current_bean.get("update", []) if isinstance(current_bean, dict) else []
+            tasks = self._merge_items(
+                current_tasks,
+                [
+                    *(task_delta.get("add") or []),
+                    *(task_delta.get("update") or []),
+                ],
+                ("id", "taskId"),
+            )
+            deleted = task_delta.get("delete") or []
+            deleted_ids = {
+                key
+                for item in deleted
+                if (key := self._item_key(item, ("id", "taskId"))) is not None
+            }
+            tasks = [
+                task for task in tasks if self._item_key(task, ("id", "taskId")) not in deleted_ids
+            ]
+            self._sync_snapshot["syncTaskBean"] = {
+                **task_delta,
+                "add": [],
+                "update": tasks,
+                "delete": [],
+            }
+
+        handled = {*collection_keys, "syncTaskBean"}
+        for key, value in delta.items():
+            if key not in handled and value is not None:
+                self._sync_snapshot[key] = value
+
     async def batch_check(self) -> dict[str, Any]:
-        """Full account state sync via v2 GET /batch/check/0."""
-        return await self.v2_get("/batch/check/0")
+        """Return cached account state refreshed with a v3 checkpoint delta."""
+        async with self._sync_lock:
+            checkpoint = self._sync_checkpoint or 0
+            delta = await self.v3_get(f"/batch/check/{checkpoint}")
+            if self._sync_checkpoint is None:
+                self._sync_snapshot = copy.deepcopy(delta)
+            else:
+                self._merge_sync_delta(delta)
+            self._sync_checkpoint = int(delta.get("checkPoint") or checkpoint)
+            return copy.deepcopy(self._sync_snapshot)
+
+    async def sync_projects(self) -> list[dict[str, Any]]:
+        """Return projects from the incrementally refreshed account snapshot."""
+        data = await self.batch_check()
+        return data.get("projectProfiles") or []
+
+    async def sync_tags(self) -> list[dict[str, Any]]:
+        """Return tags from the incrementally refreshed account snapshot."""
+        data = await self.batch_check()
+        return data.get("tags") or []

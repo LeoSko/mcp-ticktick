@@ -4,7 +4,7 @@ import httpx
 import pytest
 import respx
 
-from ticktick_mcp.client import V2_BASE, TickTickClient
+from ticktick_mcp.client import V2_BASE, V3_BASE, TickTickClient
 
 BATCH_CHECK_RESPONSE = {
     "filters": [
@@ -18,7 +18,7 @@ BATCH_CHECK_RESPONSE = {
 class TestListFilters:
     @pytest.mark.anyio
     async def test_list(self, client: TickTickClient, mock_api: respx.MockRouter):
-        mock_api.get(f"{V2_BASE}/batch/check/0").mock(
+        mock_api.get(f"{V3_BASE}/batch/check/0").mock(
             return_value=httpx.Response(200, json=BATCH_CHECK_RESPONSE)
         )
         data = await client.batch_check()

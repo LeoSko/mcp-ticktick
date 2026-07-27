@@ -16,10 +16,10 @@ def register(mcp: FastMCP) -> None:
     async def projects(ctx: Context) -> str:
         """All projects (task lists) with their IDs, names, colors, and folder assignments."""
         client = _get_client(ctx)
-        return json.dumps(await client.v1_get("/project"))
+        return json.dumps(await client.sync_projects())
 
     @mcp.resource("ticktick://tags")
     async def tags(ctx: Context) -> str:
         """All tags with their names, colors, and hierarchical relationships."""
         client = _get_client(ctx)
-        return json.dumps(await client.v2_get("/tags"))
+        return json.dumps(await client.sync_tags())

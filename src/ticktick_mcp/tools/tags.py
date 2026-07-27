@@ -27,7 +27,7 @@ def register(mcp: FastMCP) -> None:
         Requires v2 session token.
         """
         client = _get_client(ctx)
-        return await client.v2_get("/tags")
+        return await client.sync_tags()
 
     @mcp.tool(
         annotations={

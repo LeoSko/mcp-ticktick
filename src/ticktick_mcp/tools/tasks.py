@@ -26,7 +26,7 @@ async def _resolve_project_id(client: TickTickClient, project: str) -> str:
     if project.startswith("inbox") and project[5:].isdigit():
         return project
 
-    projects = await client.v1_get("/project")
+    projects = await client.sync_projects()
     parsed = [Project(**p) for p in projects]
     return resolve_name(project, parsed, lambda p: p.name, lambda p: p.id, "project")
 
@@ -131,7 +131,7 @@ def register(mcp: FastMCP) -> None:
             return data.get("tasks") or []
 
         # All projects
-        projects = await client.v1_get("/project")
+        projects = await client.sync_projects()
         all_tasks: list[dict[str, Any]] = []
         for p in projects:
             try:

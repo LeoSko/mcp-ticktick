@@ -7,6 +7,7 @@ import respx
 from ticktick_mcp.client import (
     V1_BASE,
     V2_BASE,
+    V3_BASE,
     TickTickClient,
     generate_device_id,
     url_encode,
@@ -114,3 +115,94 @@ class TestV2Auth:
         async with c:
             with pytest.raises(RuntimeError, match="session token"):
                 await c.v2_get("/tags")
+
+
+class TestIncrementalSync:
+    @pytest.mark.anyio
+    async def test_merges_checkpoint_delta(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V3_BASE}/batch/check/0").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "checkPoint": 42,
+                    "projectProfiles": [
+                        {"id": "p1", "name": "Work"},
+                        {"id": "p2", "name": "Home"},
+                    ],
+                    "projectGroups": [{"id": "g1", "name": "Old"}],
+                    "filters": [{"id": "f1", "name": "Today"}],
+                    "tags": [{"name": "work"}],
+                    "syncTaskBean": {
+                        "add": [],
+                        "update": [{"id": "t1", "title": "First"}],
+                        "delete": [],
+                    },
+                },
+            )
+        )
+        mock_api.get(f"{V3_BASE}/batch/check/42").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "checkPoint": 43,
+                    "projectProfiles": [
+                        {"id": "p1", "name": "Work renamed"},
+                    ],
+                    "projectGroups": [{"id": "g1", "deleted": True}],
+                    "filters": None,
+                    "tags": [{"name": "personal"}],
+                    "syncTaskBean": {
+                        "add": [{"id": "t2", "title": "Second"}],
+                        "update": [],
+                        "delete": [{"taskId": "t1"}],
+                    },
+                },
+            )
+        )
+
+        initial = await client.batch_check()
+        updated = await client.batch_check()
+
+        assert initial["checkPoint"] == 42
+        assert [project["name"] for project in updated["projectProfiles"]] == [
+            "Work renamed",
+            "Home",
+        ]
+        assert updated["projectGroups"] == []
+        assert updated["filters"] == [{"id": "f1", "name": "Today"}]
+        assert updated["tags"] == [{"name": "work"}, {"name": "personal"}]
+        assert updated["syncTaskBean"]["update"] == [{"id": "t2", "title": "Second"}]
+        assert updated["checkPoint"] == 43
+
+    @pytest.mark.anyio
+    async def test_unchanged_collections_survive_null_delta(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V3_BASE}/batch/check/0").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "checkPoint": 7,
+                    "projectProfiles": [{"id": "p1", "name": "Work"}],
+                    "tags": [{"name": "work"}],
+                },
+            )
+        )
+        mock_api.get(f"{V3_BASE}/batch/check/7").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "checkPoint": 7,
+                    "projectProfiles": None,
+                    "tags": None,
+                },
+            )
+        )
+
+        await client.batch_check()
+        updated = await client.batch_check()
+
+        assert updated["projectProfiles"] == [{"id": "p1", "name": "Work"}]
+        assert updated["tags"] == [{"name": "work"}]

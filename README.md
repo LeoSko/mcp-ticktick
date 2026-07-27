@@ -260,6 +260,9 @@ stored credentials.
 
 > **v1 vs v2:** The access token covers tasks and projects. For tags, folders, filters, habits, focus, and calendar you also need a v2 session token — grab the `t` cookie from your browser while logged into ticktick.com.
 
+Project, folder, filter, and tag reads share a process-local cache refreshed through
+the v3 checkpoint sync endpoint, so unchanged account data is not downloaded again.
+
 ## HTTP transport
 
 No arguments runs the stdio transport used by local MCP clients. For Streamable HTTP:
