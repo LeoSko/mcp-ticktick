@@ -260,6 +260,22 @@ stored credentials.
 
 > **v1 vs v2:** The access token covers tasks and projects. For tags, folders, filters, habits, focus, and calendar you also need a v2 session token — grab the `t` cookie from your browser while logged into ticktick.com.
 
+## HTTP transport
+
+No arguments runs the stdio transport used by local MCP clients. For Streamable HTTP:
+
+```bash
+mcp-ticktick serve --transport http --host 127.0.0.1 --port 8000
+```
+
+The MCP endpoint is `http://127.0.0.1:8000/mcp`. Legacy SSE is available with
+`--transport sse` at `/sse`. `TICKTICK_MCP_TRANSPORT`, `TICKTICK_MCP_HOST`, and
+`TICKTICK_MCP_PORT` provide equivalent defaults.
+
+> HTTP transport has no authentication in this server. Keep the default loopback
+> binding, or place it behind a TLS-enabled authenticating reverse proxy before
+> exposing it to a network.
+
 ## Development
 
 ```bash

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastmcp import FastMCP
 
@@ -40,8 +41,15 @@ register_tools(mcp)
 register_resources(mcp)
 
 
-def main() -> None:
-    mcp.run(transport="stdio")
+def main(
+    transport: Literal["stdio", "http", "streamable-http", "sse"] = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8000,
+) -> None:
+    if transport == "stdio":
+        mcp.run(transport=transport)
+        return
+    mcp.run(transport=transport, host=host, port=port)
 
 
 if __name__ == "__main__":

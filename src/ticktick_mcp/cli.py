@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import getpass
 import os
 import secrets
+import sys
 from pathlib import Path
 
 import httpx
@@ -105,6 +107,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     login_parser.add_argument("--timeout", type=float, default=300)
     login_parser.add_argument("--no-browser", action="store_true")
+    serve_parser = subparsers.add_parser("serve", help="Run with Streamable HTTP or SSE transport")
+    serve_parser.add_argument(
+        "--transport",
+        choices=("http", "streamable-http", "sse"),
+        default=os.environ.get("TICKTICK_MCP_TRANSPORT", "http"),
+    )
+    serve_parser.add_argument(
+        "--host",
+        default=os.environ.get("TICKTICK_MCP_HOST", "127.0.0.1"),
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("TICKTICK_MCP_PORT", "8000")),
+    )
     return parser
 
 
@@ -116,4 +133,16 @@ def main() -> None:
 
     from ticktick_mcp.server import main as server_main
 
-    server_main()
+    if args.command == "serve":
+        if args.host not in {"127.0.0.1", "localhost", "::1"}:
+            print(
+                "Warning: HTTP transport has no built-in authentication. "
+                "Use a TLS/authenticating reverse proxy before exposing it.",
+                file=sys.stderr,
+            )
+        with contextlib.suppress(KeyboardInterrupt):
+            server_main(transport=args.transport, host=args.host, port=args.port)
+        return
+
+    with contextlib.suppress(KeyboardInterrupt):
+        server_main()
