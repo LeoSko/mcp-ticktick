@@ -161,6 +161,15 @@ Plus 4 read-only **resources**: `ticktick://profile` · `ticktick://settings` ·
 | `unparent_task` | Remove a task from its parent |
 | `list_trash` | List deleted tasks |
 
+`add_task` and `edit_task` accept IANA timezone names such as
+`America/Chicago` and `Europe/Stockholm`. The package includes the IANA timezone
+database for systems without one, including Windows. Pass `timezone` with an
+all-day date to preserve the intended local calendar date:
+
+```text
+add_task(title="Test", due="2027-03-01", all_day=true, timezone="America/Chicago")
+```
+
 ### Projects
 
 | Tool | Description |

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import zoneinfo
+
 import pytest
 
 from ticktick_mcp.dates import (
@@ -111,6 +113,18 @@ class TestToApiString:
         dt = ParsedDateTime(2026, 7, 15, 14, 0)
         s = dt.to_api_string("UTC")
         assert s == "2026-07-15T14:00:00.000+0000"
+
+    def test_iana_timezone_without_system_database(self):
+        original_path = zoneinfo.TZPATH
+        try:
+            zoneinfo.reset_tzpath([])
+            zoneinfo.ZoneInfo.clear_cache()
+
+            dt = ParsedDateTime(2027, 3, 1)
+            assert dt.to_api_string("America/Chicago") == "2027-03-01T00:00:00.000-0600"
+        finally:
+            zoneinfo.reset_tzpath(original_path)
+            zoneinfo.ZoneInfo.clear_cache()
 
 
 class TestAddDuration:
