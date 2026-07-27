@@ -16,7 +16,10 @@ from ticktick_mcp.auth import (
     build_authorization_url,
     default_credentials_path,
     exchange_authorization_code,
+    extract_session_token,
+    load_credentials,
     save_credentials,
+    save_session_token,
     wait_for_authorization_code,
 )
 
@@ -30,6 +33,19 @@ def _required_value(value: str | None, prompt: str, secret: bool = False) -> str
     return entered.strip()
 
 
+def session_cookie_instructions() -> str:
+    return (
+        "Private v2/v3 API setup:\n"
+        "1. Sign in at https://ticktick.com and open browser developer tools.\n"
+        "2. Open Network, select an api.ticktick.com request, and copy its Cookie "
+        "request header.\n"
+        "3. Run `mcp-ticktick session` and paste that header. The helper extracts "
+        "the `t` cookie and stores it securely.\n"
+        "You can also paste only the value of the `t` cookie from Application/Storage "
+        "-> Cookies."
+    )
+
+
 async def _exchange_and_save(
     code: str,
     client_id: str,
@@ -41,15 +57,19 @@ async def _exchange_and_save(
         tokens = await exchange_authorization_code(
             http, code, client_id, client_secret, redirect_uri
         )
-    return save_credentials(
+    credentials = load_credentials(credentials_path)
+    credentials.update(
         {
             "client_id": client_id,
             "client_secret": client_secret,
-            "access_token": tokens["access_token"],
-            "refresh_token": tokens.get("refresh_token"),
-        },
-        credentials_path,
+            "access_token": str(tokens["access_token"]),
+        }
     )
+    if refresh_token := tokens.get("refresh_token"):
+        credentials["refresh_token"] = str(refresh_token)
+    else:
+        credentials.pop("refresh_token", None)
+    return save_credentials(credentials, credentials_path)
 
 
 def login(args: argparse.Namespace) -> None:
@@ -87,7 +107,25 @@ def login(args: argparse.Namespace) -> None:
             args.credentials_file,
         )
     )
-    print(f"Authentication complete. Credentials saved to {credentials_path}")
+    print(
+        f"OAuth authentication complete. Credentials saved to {credentials_path}\n\n"
+        f"{session_cookie_instructions()}"
+    )
+
+
+def store_session(args: argparse.Namespace) -> None:
+    print(session_cookie_instructions())
+    raw_value = (
+        sys.stdin.read()
+        if args.stdin
+        else getpass.getpass("Paste the `t` cookie value or full Cookie header: ")
+    )
+    try:
+        token = extract_session_token(raw_value)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    credentials_path = save_session_token(token, args.credentials_file)
+    print(f"Session cookie saved to {credentials_path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,6 +145,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     login_parser.add_argument("--timeout", type=float, default=300)
     login_parser.add_argument("--no-browser", action="store_true")
+    session_parser = subparsers.add_parser(
+        "session", help="Store the browser session cookie for private v2/v3 APIs"
+    )
+    session_parser.add_argument(
+        "--credentials-file",
+        type=Path,
+        default=default_credentials_path(),
+    )
+    session_parser.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read the cookie value or Cookie header from standard input",
+    )
     serve_parser = subparsers.add_parser("serve", help="Run with Streamable HTTP or SSE transport")
     serve_parser.add_argument(
         "--transport",
@@ -129,6 +180,9 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.command == "login":
         login(args)
+        return
+    if args.command == "session":
+        store_session(args)
         return
 
     from ticktick_mcp.server import main as server_main

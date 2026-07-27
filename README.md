@@ -23,10 +23,13 @@ Tasks, projects, habits, focus timers, tags, filters, and calendars.
 ```bash
 pip install mcp-ticktick
 mcp-ticktick login
+mcp-ticktick session
 ```
 
-The login command walks you through creating a TickTick OAuth app and stores the
-result locally. Then add the server to your AI client of choice:
+The login command walks you through creating a TickTick OAuth app. The session
+helper accepts either the browser's `t` cookie value or a copied Cookie request
+header and stores both credentials locally. Then add the server to your AI client
+of choice:
 
 <details>
 <summary><strong>Claude Desktop</strong></summary>
@@ -37,10 +40,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "ticktick": {
-      "command": "mcp-ticktick",
-      "env": {
-        "TICKTICK_V2_SESSION_TOKEN": "your-session-cookie"
-      }
+      "command": "mcp-ticktick"
     }
   }
 }
@@ -55,8 +55,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 claude mcp add mcp-ticktick -- mcp-ticktick
 ```
 
-Stored OAuth credentials are loaded automatically. Set
-`TICKTICK_V2_SESSION_TOKEN` in the environment for private API features.
+Stored OAuth and browser-session credentials are loaded automatically.
 
 </details>
 
@@ -69,10 +68,7 @@ Add to `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "ticktick": {
-      "command": "mcp-ticktick",
-      "env": {
-        "TICKTICK_V2_SESSION_TOKEN": "your-session-cookie"
-      }
+      "command": "mcp-ticktick"
     }
   }
 }
@@ -89,10 +85,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 {
   "mcpServers": {
     "ticktick": {
-      "command": "mcp-ticktick",
-      "env": {
-        "TICKTICK_V2_SESSION_TOKEN": "your-session-cookie"
-      }
+      "command": "mcp-ticktick"
     }
   }
 }
@@ -110,10 +103,7 @@ Add to your VS Code `settings.json`:
   "mcp": {
     "servers": {
       "ticktick": {
-        "command": "mcp-ticktick",
-        "env": {
-          "TICKTICK_V2_SESSION_TOKEN": "your-session-cookie"
-        }
+        "command": "mcp-ticktick"
       }
     }
   }
@@ -262,7 +252,8 @@ mcp-ticktick login
 The command prints the setup steps, prompts for the app's client ID and secret,
 opens TickTick authorization in your browser, validates the loopback callback,
 and exchanges the authorization code. It stores the resulting credentials at
-`~/.config/mcp-ticktick/credentials.json` with owner-only permissions.
+`~/.config/mcp-ticktick/credentials.json` with owner-only permissions, then
+prints the browser-session setup steps.
 
 Use `--no-browser` to print the authorization URL without opening it, or
 `--credentials-file PATH` to choose another credential file.
@@ -271,16 +262,20 @@ Use `--no-browser` to print the authorization URL without opening it, or
 
 To enable private v2/v3 features:
 
-1. Sign in at [ticktick.com](https://ticktick.com).
-2. Open the browser developer tools.
-3. In **Application/Storage → Cookies → `https://ticktick.com`**, copy the value
-   of the cookie named `t`.
-4. Set that value as `TICKTICK_V2_SESSION_TOKEN` in the environment used to
-   launch the MCP server.
+1. Sign in at [ticktick.com](https://ticktick.com) and open browser developer
+   tools.
+2. In **Network**, select an `api.ticktick.com` request and copy its Cookie
+   request header. Alternatively, copy the value of `t` from
+   **Application/Storage → Cookies**.
+3. Run `mcp-ticktick session` and paste what you copied.
 
-The OAuth login does not capture or store this cookie. It expires independently;
-replace it when the server reports that the v2 session is invalid. Treat it like
-a password: do not commit it, paste it into issues, or include it in logs.
+The helper extracts `t` from a full Cookie header and adds it to the same
+owner-only credential file without overwriting OAuth credentials. For scripts,
+pipe the value or header to `mcp-ticktick session --stdin`.
+
+The cookie expires independently; repeat the session step when the server reports
+that the v2 session is invalid. Treat it like a password: do not commit it, paste
+it into issues, or include it in logs.
 
 ### Environment overrides
 
@@ -293,7 +288,7 @@ Environment variables take precedence over stored OAuth credentials.
 | `TICKTICK_CLIENT_SECRET` | No | Override the stored OAuth client secret |
 | `TICKTICK_REFRESH_TOKEN` | No | OAuth refresh token, when issued |
 | `TICKTICK_CREDENTIALS_FILE` | No | Override the OAuth credential file path |
-| `TICKTICK_V2_SESSION_TOKEN` | For private API tools | Browser `t` cookie used by v2 and v3 |
+| `TICKTICK_V2_SESSION_TOKEN` | No | Override the stored browser `t` cookie used by v2 and v3 |
 
 Project, folder, filter, and tag reads share a process-local cache refreshed through
 the v3 checkpoint sync endpoint, so unchanged account data is not downloaded again.

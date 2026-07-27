@@ -20,10 +20,12 @@ from ticktick_mcp.auth import (
     TOKEN_URL,
     build_authorization_url,
     exchange_authorization_code,
+    extract_session_token,
     load_credentials,
     parse_authorization_callback,
     refresh_access_token,
     save_credentials,
+    save_session_token,
     wait_for_authorization_code,
 )
 
@@ -141,6 +143,34 @@ class TestBrowserLogin:
         }
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
         assert json.loads(path.read_text())["refresh_token"] is None
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("session-token", "session-token"),
+            ("t=session-token", "session-token"),
+            ("Cookie: foo=bar; t=session-token; locale=en", "session-token"),
+        ],
+    )
+    def test_extract_session_token(self, value: str, expected: str):
+        assert extract_session_token(value) == expected
+
+    @pytest.mark.parametrize("value", ["Cookie: foo=bar; locale=en", "foo=bar", "t="])
+    def test_rejects_cookie_header_without_session_token(self, value: str):
+        with pytest.raises(ValueError, match="does not contain"):
+            extract_session_token(value)
+
+    def test_save_session_token_preserves_oauth_credentials(self, tmp_path: Path):
+        path = tmp_path / "credentials.json"
+        save_credentials({"access_token": "access-token"}, path)
+
+        save_session_token("Cookie: foo=bar; t=session-token", path)
+
+        assert load_credentials(path) == {
+            "access_token": "access-token",
+            "session_token": "session-token",
+        }
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 class TestRefreshToken:

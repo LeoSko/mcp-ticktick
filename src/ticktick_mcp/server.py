@@ -24,7 +24,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict]:
         access_token=access_token,
         client_id=os.environ.get("TICKTICK_CLIENT_ID") or stored.get("client_id"),
         client_secret=os.environ.get("TICKTICK_CLIENT_SECRET") or stored.get("client_secret"),
-        session_token=os.environ.get("TICKTICK_V2_SESSION_TOKEN"),
+        session_token=os.environ.get("TICKTICK_V2_SESSION_TOKEN") or stored.get("session_token"),
         refresh_token=os.environ.get("TICKTICK_REFRESH_TOKEN") or stored.get("refresh_token"),
     )
     async with client:

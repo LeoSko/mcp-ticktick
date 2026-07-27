@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time
 import webbrowser
 from collections.abc import Mapping
@@ -50,6 +51,28 @@ def save_credentials(credentials: Mapping[str, Any], path: Path | None = None) -
     temporary_path.replace(credentials_path)
     credentials_path.chmod(0o600)
     return credentials_path
+
+
+def extract_session_token(value: str) -> str:
+    """Extract the TickTick `t` cookie from a value or copied Cookie header."""
+    candidate = value.strip()
+    if not candidate:
+        raise ValueError("TickTick session cookie is empty")
+
+    match = re.search(r"(?:^|[;\s])t=([^;\s]+)", candidate, flags=re.IGNORECASE)
+    if match:
+        return match.group(1).strip("\"'")
+    if "=" in candidate or ";" in candidate or candidate.lower().startswith("cookie:"):
+        raise ValueError("Copied Cookie header does not contain a `t` cookie")
+    return candidate
+
+
+def save_session_token(value: str, path: Path | None = None) -> Path:
+    """Add a browser session token to the owner-only credential file."""
+    credentials_path = path or default_credentials_path()
+    credentials = load_credentials(credentials_path)
+    credentials["session_token"] = extract_session_token(value)
+    return save_credentials(credentials, credentials_path)
 
 
 def build_authorization_url(
