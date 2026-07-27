@@ -237,12 +237,25 @@ Plus 4 read-only **resources**: `ticktick://profile` · `ticktick://settings` ·
 
 You need a TickTick [OAuth app](https://developer.ticktick.com/manage) (free to create).
 
+Register `http://127.0.0.1:8080/callback` as the app's OAuth redirect URL, then run:
+
+```bash
+uvx --from mcp-ticktick mcp-ticktick login
+```
+
+The command opens TickTick in your browser, validates the local callback, exchanges
+the authorization code, and stores credentials in
+`~/.config/mcp-ticktick/credentials.json` with owner-only permissions. Use
+`--no-browser` to print the URL without opening it. Environment variables override
+stored credentials.
+
 | Variable | Required | Description |
 |---|---|---|
-| `TICKTICK_ACCESS_TOKEN` | **Yes** | OAuth access token |
+| `TICKTICK_ACCESS_TOKEN` | No | OAuth access token |
 | `TICKTICK_CLIENT_ID` | No | OAuth client ID (for token refresh) |
 | `TICKTICK_CLIENT_SECRET` | No | OAuth client secret (for token refresh) |
 | `TICKTICK_REFRESH_TOKEN` | No | OAuth refresh token |
+| `TICKTICK_CREDENTIALS_FILE` | No | Override stored credential path |
 | `TICKTICK_V2_SESSION_TOKEN` | No | Browser `t` cookie for v2 features |
 
 > **v1 vs v2:** The access token covers tasks and projects. For tags, folders, filters, habits, focus, and calendar you also need a v2 session token — grab the `t` cookie from your browser while logged into ticktick.com.
