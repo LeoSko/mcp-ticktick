@@ -51,6 +51,13 @@ async def _exchange_and_save(
 
 
 def login(args: argparse.Namespace) -> None:
+    print(
+        "TickTick OAuth setup:\n"
+        "1. Open https://developer.ticktick.com/manage\n"
+        "2. Create or select an app.\n"
+        f"3. Set its OAuth redirect URL to: {args.redirect_uri}\n"
+        "4. Copy the Client ID and Client Secret shown there.\n"
+    )
     client_id = _required_value(
         args.client_id or os.environ.get("TICKTICK_CLIENT_ID"),
         "TickTick client ID: ",
