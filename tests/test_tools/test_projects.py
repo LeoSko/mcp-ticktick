@@ -5,6 +5,7 @@ import pytest
 import respx
 
 from ticktick_mcp.client import V1_BASE, TickTickClient
+from ticktick_mcp.models import Project
 
 
 class TestListProjects:
@@ -22,6 +23,11 @@ class TestListProjects:
         result = await client.v1_get("/project")
         assert len(result) == 2
         assert result[0]["name"] == "Work"
+
+    def test_project_accepts_null_closed_state(self):
+        project = Project(id="p1", name="Work", closed=None)
+
+        assert project.closed is None
 
 
 class TestGetProject:

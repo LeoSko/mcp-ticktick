@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 import respx
 
 from ticktick_mcp.client import V1_BASE, V2_BASE, TickTickClient
-from ticktick_mcp.tools.tasks import _edit_task_v2
+from ticktick_mcp.tools.tasks import _edit_task_v2, _resolve_project_id
 
 
 class TestListTasks:
@@ -30,6 +31,23 @@ class TestListTasks:
         )
         result = await client.v2_get("/project/all/completedInAll/?limit=50")
         assert result[0]["status"] == 2
+
+    @pytest.mark.anyio
+    async def test_resolves_project_with_null_closed_state(self, client: TickTickClient):
+        client.sync_projects = AsyncMock(
+            return_value=[{"id": "p1", "name": "Work", "closed": None}]
+        )
+
+        assert await _resolve_project_id(client, "Work") == "p1"
+
+    @pytest.mark.anyio
+    async def test_exact_project_id_skips_project_sync(self, client: TickTickClient):
+        client.sync_projects = AsyncMock()
+
+        project_id = "5c6dca84e4b0117beaa3e4b4"
+
+        assert await _resolve_project_id(client, project_id) == project_id
+        client.sync_projects.assert_not_awaited()
 
 
 class TestAddTask:

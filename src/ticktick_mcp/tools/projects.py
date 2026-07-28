@@ -20,6 +20,8 @@ async def _resolve_project_id(client: TickTickClient, name_or_id: str) -> str:
         return await _get_inbox_id(client)
     if name_or_id.startswith("inbox") and name_or_id[5:].isdigit():
         return name_or_id
+    if len(name_or_id) >= 20 and all(c in "0123456789abcdefABCDEF" for c in name_or_id):
+        return name_or_id
     projects = await client.sync_projects()
     parsed = [Project(**p) for p in projects]
     return resolve_name(name_or_id, parsed, lambda p: p.name, lambda p: p.id, "project")

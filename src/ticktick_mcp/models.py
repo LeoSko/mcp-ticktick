@@ -41,7 +41,7 @@ class Project(CamelModel):
     name: str = ""
     color: str | None = None
     sort_order: int = 0
-    closed: bool = False
+    closed: bool | None = None
     group_id: str | None = None
     view_mode: str | None = None
     kind: str | None = None
