@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -10,10 +10,14 @@ from fastmcp.exceptions import ToolError
 
 from ticktick_mcp.client import V1_BASE, V2_BASE, TickTickClient
 from ticktick_mcp.tools.tasks import (
+    _add_task_comment_v2,
     _build_add_task_body,
     _build_edit_task_updates,
+    _delete_task_comment_v2,
+    _edit_task_comment_v2,
     _edit_task_v2,
     _edit_tasks_v2,
+    _list_task_comments_v2,
     _resolve_project_id,
 )
 
@@ -431,6 +435,154 @@ class TestEditTask:
         assert [task["title"] for task in payload["update"]] == ["New 1", "Old 2"]
         assert payload["update"][1]["priority"] == 3
         assert len(route.calls) == 1
+
+
+class TestTaskComments:
+    @pytest.mark.anyio
+    async def test_list_comments_includes_metadata(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V2_BASE}/project/p1/task/t1/comments").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "c1",
+                        "title": "Comment",
+                        "createdTime": "2026-08-02T11:48:01.859+0000",
+                        "modifiedTime": "2026-08-02T11:48:01.859+0000",
+                        "userProfile": {"isMyself": True},
+                    }
+                ],
+            )
+        )
+
+        result = await _list_task_comments_v2(client, task_id="t1", project_id="p1")
+
+        assert result[0]["id"] == "c1"
+        assert result[0]["createdTime"] == "2026-08-02T11:48:01.859+0000"
+        assert result[0]["userProfile"] == {"isMyself": True}
+
+    @pytest.mark.anyio
+    async def test_add_comment_returns_created_comment(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        post_route = mock_api.post(f"{V2_BASE}/project/p1/task/t1/comment").mock(
+            return_value=httpx.Response(200)
+        )
+        mock_api.get(f"{V2_BASE}/project/p1/task/t1/comments").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "c1",
+                        "title": "Added",
+                        "createdTime": "2026-08-02T11:48:01.859+0000",
+                        "modifiedTime": "2026-08-02T11:48:01.859+0000",
+                        "userProfile": {"isMyself": True},
+                    }
+                ],
+            )
+        )
+
+        comment_uuid = type("U", (), {"hex": "c1"})()
+        with patch("ticktick_mcp.tools.tasks.uuid.uuid4", return_value=comment_uuid):
+            result = await _add_task_comment_v2(
+                client,
+                task_id="t1",
+                project_id="p1",
+                text="Added",
+            )
+
+        payload = json.loads(post_route.calls.last.request.content)
+        assert payload == {"id": "c1", "title": "Added", "taskId": "t1", "projectId": "p1"}
+        assert result["id"] == "c1"
+        assert result["userProfile"] == {"isMyself": True}
+
+    @pytest.mark.anyio
+    async def test_edit_comment_preserves_metadata(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V2_BASE}/project/p1/task/t1/comments").mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": "c1",
+                            "title": "Old",
+                            "createdTime": "2026-08-02T11:48:01.859+0000",
+                            "modifiedTime": "2026-08-02T11:48:01.859+0000",
+                            "userProfile": {"isMyself": True},
+                            "mentions": [{"userId": "u1"}],
+                        }
+                    ],
+                ),
+                httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": "c1",
+                            "title": "New",
+                            "createdTime": "2026-08-02T11:48:01.859+0000",
+                            "modifiedTime": "2026-08-02T11:49:01.859+0000",
+                            "userProfile": {"isMyself": True},
+                            "mentions": [{"userId": "u1"}],
+                        }
+                    ],
+                ),
+            ]
+        )
+        put_route = mock_api.put(f"{V2_BASE}/project/p1/task/t1/comment/c1").mock(
+            return_value=httpx.Response(200)
+        )
+
+        result = await _edit_task_comment_v2(
+            client,
+            task_id="t1",
+            project_id="p1",
+            comment_id="c1",
+            text="New",
+        )
+
+        payload = json.loads(put_route.calls.last.request.content)
+        assert payload["title"] == "New"
+        assert payload["createdTime"] == "2026-08-02T11:48:01.859+0000"
+        assert payload["mentions"] == [{"userId": "u1"}]
+        assert result["modifiedTime"] == "2026-08-02T11:49:01.859+0000"
+
+    @pytest.mark.anyio
+    async def test_delete_comment(self, client: TickTickClient, mock_api: respx.MockRouter):
+        route = mock_api.delete(f"{V2_BASE}/project/p1/task/t1/comment/c1").mock(
+            return_value=httpx.Response(200)
+        )
+
+        result = await _delete_task_comment_v2(
+            client,
+            task_id="t1",
+            project_id="p1",
+            comment_id="c1",
+        )
+
+        assert len(route.calls) == 1
+        assert result == "Comment c1 deleted from task t1"
+
+    @pytest.mark.anyio
+    async def test_edit_missing_comment_raises_tool_error(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V2_BASE}/project/p1/task/t1/comments").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+
+        with pytest.raises(ToolError, match="Comment c1 was not found"):
+            await _edit_task_comment_v2(
+                client,
+                task_id="t1",
+                project_id="p1",
+                comment_id="c1",
+                text="New",
+            )
 
 
 class TestCompleteTask:

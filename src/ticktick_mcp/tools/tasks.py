@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import uuid
 from typing import Any
 
 from fastmcp import Context, FastMCP
@@ -49,6 +50,130 @@ async def _get_inbox_id(client: TickTickClient) -> str:
 
     client._inbox_project_id = inbox_id
     return inbox_id
+
+
+def _comment_body(
+    *,
+    task_id: str,
+    project_id: str,
+    text: str,
+    comment_id: str | None = None,
+    reply_comment_id: str | None = None,
+    mentions: list[dict[str, Any]] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if not text:
+        raise ToolError("Comment text is required")
+
+    body: dict[str, Any] = {
+        "id": comment_id or uuid.uuid4().hex,
+        "title": text,
+        "taskId": task_id,
+        "projectId": project_id,
+    }
+    if reply_comment_id is not None:
+        body["replyCommentId"] = reply_comment_id
+    if mentions is not None:
+        body["mentions"] = mentions
+    if attachments is not None:
+        body["attachments"] = attachments
+    return body
+
+
+def _comments_from_response(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        comments = data.get("comments")
+        if isinstance(comments, list):
+            return comments
+    raise ToolError("Unexpected TickTick comments response")
+
+
+async def _list_task_comments_v2(
+    client: TickTickClient,
+    *,
+    task_id: str,
+    project_id: str,
+) -> list[dict[str, Any]]:
+    data = await client.v2_get(f"/project/{project_id}/task/{task_id}/comments")
+    return _comments_from_response(data)
+
+
+async def _get_task_comment_v2(
+    client: TickTickClient,
+    *,
+    task_id: str,
+    project_id: str,
+    comment_id: str,
+) -> dict[str, Any]:
+    comments = await _list_task_comments_v2(client, task_id=task_id, project_id=project_id)
+    for comment in comments:
+        if comment.get("id") == comment_id:
+            return comment
+    raise ToolError(f"Comment {comment_id} was not found on task {task_id}")
+
+
+async def _add_task_comment_v2(
+    client: TickTickClient,
+    *,
+    task_id: str,
+    project_id: str,
+    text: str,
+    reply_comment_id: str | None = None,
+    mentions: list[dict[str, Any]] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    body = _comment_body(
+        task_id=task_id,
+        project_id=project_id,
+        text=text,
+        reply_comment_id=reply_comment_id,
+        mentions=mentions,
+        attachments=attachments,
+    )
+    await client.v2_post(f"/project/{project_id}/task/{task_id}/comment", body)
+    return await _get_task_comment_v2(
+        client,
+        task_id=task_id,
+        project_id=project_id,
+        comment_id=body["id"],
+    )
+
+
+async def _edit_task_comment_v2(
+    client: TickTickClient,
+    *,
+    task_id: str,
+    project_id: str,
+    comment_id: str,
+    text: str,
+) -> dict[str, Any]:
+    comment = await _get_task_comment_v2(
+        client,
+        task_id=task_id,
+        project_id=project_id,
+        comment_id=comment_id,
+    )
+    comment["title"] = text
+    await client.v2_put(f"/project/{project_id}/task/{task_id}/comment/{comment_id}", comment)
+    return await _get_task_comment_v2(
+        client,
+        task_id=task_id,
+        project_id=project_id,
+        comment_id=comment_id,
+    )
+
+
+async def _delete_task_comment_v2(
+    client: TickTickClient,
+    *,
+    task_id: str,
+    project_id: str,
+    comment_id: str,
+) -> str:
+    await client.v2_delete(f"/project/{project_id}/task/{task_id}/comment/{comment_id}")
+    return f"Comment {comment_id} deleted from task {task_id}"
 
 
 async def _edit_task_v2(
@@ -356,6 +481,141 @@ def register(mcp: FastMCP) -> None:
         client = _get_client(ctx)
         pid = await _resolve_project_id(client, project)
         return await client.v1_get(f"/project/{pid}/task/{task_id}")
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
+    async def list_task_comments(
+        ctx: Context,
+        task_id: str,
+        project: str,
+    ) -> list[dict[str, Any]]:
+        """List comments for a task.
+
+        Requires a v2 session token. Responses include TickTick's comment ID,
+        title text, createdTime, modifiedTime, userProfile, reply metadata,
+        mentions, and attachments when present.
+
+        Args:
+            task_id: The task ID.
+            project: The project name or ID containing the task.
+        """
+        client = _get_client(ctx)
+        pid = await _resolve_project_id(client, project)
+        return await _list_task_comments_v2(client, task_id=task_id, project_id=pid)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
+    async def add_task_comment(
+        ctx: Context,
+        task_id: str,
+        project: str,
+        text: str,
+        reply_comment_id: str | None = None,
+        mentions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Add a comment to a task.
+
+        Requires a v2 session token. The returned comment includes the stable
+        comment ID and author/timestamp metadata returned by TickTick.
+
+        Args:
+            task_id: The task ID.
+            project: The project name or ID containing the task.
+            text: Comment text.
+            reply_comment_id: Optional comment ID to reply to.
+            mentions: Optional raw TickTick mention objects.
+        """
+        client = _get_client(ctx)
+        pid = await _resolve_project_id(client, project)
+        return await _add_task_comment_v2(
+            client,
+            task_id=task_id,
+            project_id=pid,
+            text=text,
+            reply_comment_id=reply_comment_id,
+            mentions=mentions,
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
+    async def edit_task_comment(
+        ctx: Context,
+        task_id: str,
+        project: str,
+        comment_id: str,
+        text: str,
+    ) -> dict[str, Any]:
+        """Edit a task comment.
+
+        Requires a v2 session token. TickTick supports editing comments through
+        the private web API; this tool preserves the existing comment metadata
+        and replaces only the title text.
+
+        Args:
+            task_id: The task ID.
+            project: The project name or ID containing the task.
+            comment_id: The stable comment ID to edit.
+            text: New comment text.
+        """
+        client = _get_client(ctx)
+        pid = await _resolve_project_id(client, project)
+        return await _edit_task_comment_v2(
+            client,
+            task_id=task_id,
+            project_id=pid,
+            comment_id=comment_id,
+            text=text,
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    async def delete_task_comment(
+        ctx: Context,
+        task_id: str,
+        project: str,
+        comment_id: str,
+    ) -> str:
+        """Delete a task comment.
+
+        Requires a v2 session token.
+
+        Args:
+            task_id: The task ID.
+            project: The project name or ID containing the task.
+            comment_id: The stable comment ID to delete.
+        """
+        client = _get_client(ctx)
+        pid = await _resolve_project_id(client, project)
+        return await _delete_task_comment_v2(
+            client,
+            task_id=task_id,
+            project_id=pid,
+            comment_id=comment_id,
+        )
 
     @mcp.tool(
         annotations={

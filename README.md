@@ -12,7 +12,7 @@
 A [Model Context Protocol](https://modelcontextprotocol.io/) server that gives LLMs broad access to [TickTick](https://ticktick.com).<br>
 Tasks, projects, habits, focus timers, tags, filters, and calendars.
 
-**49 tools** · **4 resources** · **Broad TickTick coverage**
+**53 tools** · **4 resources** · **Broad TickTick coverage**
 
 </div>
 
@@ -120,7 +120,7 @@ Add to your VS Code `settings.json`:
 
 | Domain | Tools | Highlights |
 |---|---|---|
-| **Tasks** | 14 | Create, edit, complete, delete, move, subtasks, trash, batch changes |
+| **Tasks** | 18 | Create, edit, complete, delete, move, comments, subtasks, trash, batch changes |
 | **Projects** | 5 | CRUD with fuzzy name matching |
 | **Tags** | 6 | Create, rename, merge, hierarchies |
 | **Folders** | 4 | Group projects into folders |
@@ -140,6 +140,10 @@ Plus 4 read-only **resources**: `ticktick://profile` · `ticktick://settings` ·
 |---|---|
 | `list_tasks` | List tasks from a project or all projects |
 | `get_task` | Get a single task by ID |
+| `list_task_comments` | List comments for a task |
+| `add_task_comment` | Add a comment to a task |
+| `edit_task_comment` | Edit a task comment |
+| `delete_task_comment` | Delete a task comment |
 | `add_task` | Create a task with due date, priority, tags, checklist |
 | `add_tasks` | Create multiple tasks in one MCP call |
 | `edit_task` | Update task fields |
@@ -152,6 +156,20 @@ Plus 4 read-only **resources**: `ticktick://profile` · `ticktick://settings` ·
 | `set_subtasks` | Make multiple tasks subtasks in one batch request |
 | `unparent_task` | Remove a task from its parent |
 | `list_trash` | List deleted tasks |
+
+Task comment tools require the browser-session `t` cookie because TickTick
+exposes comments through the private v2 web API. `list_task_comments` returns
+TickTick's stable comment IDs plus author and timestamp metadata such as
+`userProfile`, `createdTime`, and `modifiedTime`. Editing is supported by
+TickTick's web API and replaces the comment text while preserving existing
+comment metadata:
+
+```text
+list_task_comments(task_id="...", project="Inbox")
+add_task_comment(task_id="...", project="Inbox", text="Waiting for invoice")
+edit_task_comment(task_id="...", project="Inbox", comment_id="...", text="Invoice received")
+delete_task_comment(task_id="...", project="Inbox", comment_id="...")
+```
 
 `add_task`, `add_tasks`, `edit_task`, and `edit_tasks` accept `reminders`.
 Use official TickTick trigger strings, bare ISO-8601 durations, or compact
