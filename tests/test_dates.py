@@ -9,6 +9,7 @@ from ticktick_mcp.dates import (
     ParsedDateTime,
     date_to_epoch_ms,
     date_to_stamp,
+    normalize_reminders,
     parse_datetime,
     parse_duration,
 )
@@ -179,3 +180,35 @@ class TestDateToEpochMs:
     def test_today(self):
         ms = date_to_epoch_ms("today")
         assert ms > 0
+
+
+class TestNormalizeReminders:
+    def test_official_triggers(self):
+        assert normalize_reminders(["TRIGGER:PT0S", "trigger:p0dt9h0m0s"]) == [
+            "TRIGGER:PT0S",
+            "TRIGGER:P0DT9H0M0S",
+        ]
+
+    def test_bare_iso_duration(self):
+        assert normalize_reminders(["PT30M", "-P1D"]) == ["TRIGGER:PT30M", "TRIGGER:-P1D"]
+
+    def test_compact_relative_offsets(self):
+        assert normalize_reminders(["30m", "1h", "1d", "1d2h30m"]) == [
+            "TRIGGER:-PT30M",
+            "TRIGGER:-PT1H",
+            "TRIGGER:-P1D",
+            "TRIGGER:-P1DT2H30M",
+        ]
+
+    def test_zero_compact_offset(self):
+        assert normalize_reminders(["0m"]) == ["TRIGGER:PT0S"]
+
+    def test_rejects_invalid(self):
+        with pytest.raises(ValueError, match="Invalid reminder"):
+            normalize_reminders(["tomorrow"])
+        with pytest.raises(ValueError, match="must not be empty"):
+            normalize_reminders([" "])
+
+    def test_rejects_more_than_five(self):
+        with pytest.raises(ValueError, match="at most 5"):
+            normalize_reminders(["PT0S", "PT1M", "PT2M", "PT3M", "PT4M", "PT5M"])

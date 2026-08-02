@@ -6,9 +6,16 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 import respx
+from fastmcp.exceptions import ToolError
 
 from ticktick_mcp.client import V1_BASE, V2_BASE, TickTickClient
-from ticktick_mcp.tools.tasks import _edit_task_v2, _edit_tasks_v2, _resolve_project_id
+from ticktick_mcp.tools.tasks import (
+    _build_add_task_body,
+    _build_edit_task_updates,
+    _edit_task_v2,
+    _edit_tasks_v2,
+    _resolve_project_id,
+)
 
 
 class TestListTasks:
@@ -61,6 +68,35 @@ class TestAddTask:
         result = await client.v1_post("/task", {"title": "Buy milk"})
         assert result["id"] == "t1"
         assert result["title"] == "Buy milk"
+
+    @pytest.mark.anyio
+    async def test_create_with_timed_reminder(self, client: TickTickClient):
+        body = await _build_add_task_body(
+            client,
+            title="Call",
+            due="2026-02-16T14:30",
+            reminders=["30m", "TRIGGER:PT0S"],
+            timezone="UTC",
+        )
+
+        assert body["dueDate"] == "2026-02-16T14:30:00.000+0000"
+        assert body["isAllDay"] is False
+        assert body["timeZone"] == "UTC"
+        assert body["reminders"] == ["TRIGGER:-PT30M", "TRIGGER:PT0S"]
+
+    @pytest.mark.anyio
+    async def test_create_with_all_day_reminder(self, client: TickTickClient):
+        body = await _build_add_task_body(
+            client,
+            title="Birthday",
+            due="2026-02-16",
+            reminders=["TRIGGER:P0DT9H0M0S"],
+            timezone="Europe/Stockholm",
+        )
+
+        assert body["isAllDay"] is True
+        assert body["timeZone"] == "Europe/Stockholm"
+        assert body["reminders"] == ["TRIGGER:P0DT9H0M0S"]
 
 
 class TestEditTask:
@@ -197,6 +233,169 @@ class TestEditTask:
 
         assert result["repeatFlag"] is None
         assert result["repeatFirstDate"] == "2026-07-27T21:00:00.000+0000"
+
+    def test_build_replace_reminders(self):
+        updates = _build_edit_task_updates(
+            task_id="t1",
+            project_id="p1",
+            reminders=["1h", "PT0S"],
+        )
+
+        assert updates["reminders"] == ["TRIGGER:-PT1H", "TRIGGER:PT0S"]
+
+    def test_build_clear_reminders(self):
+        updates = _build_edit_task_updates(
+            task_id="t1",
+            project_id="p1",
+            clear_reminders=True,
+        )
+
+        assert updates["reminders"] == []
+
+    def test_rejects_replace_and_clear_reminders(self):
+        with pytest.raises(ToolError, match="Use either reminders or clear_reminders"):
+            _build_edit_task_updates(
+                task_id="t1",
+                project_id="p1",
+                reminders=["30m"],
+                clear_reminders=True,
+            )
+
+    @pytest.mark.anyio
+    async def test_unrelated_edit_preserves_reminders(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "t1",
+                    "projectId": "p1",
+                    "title": "Old title",
+                    "reminders": ["TRIGGER:-PT30M"],
+                },
+            )
+        )
+        route = mock_api.post(f"{V2_BASE}/batch/task").mock(
+            return_value=httpx.Response(200, json={"id2etag": {"t1": "new-etag"}})
+        )
+
+        result = await _edit_task_v2(
+            client,
+            "t1",
+            "p1",
+            {"taskId": "t1", "projectId": "p1", "title": "New title"},
+            None,
+            False,
+        )
+
+        assert result["reminders"] == ["TRIGGER:-PT30M"]
+        payload = json.loads(route.calls.last.request.content)
+        assert payload["update"][0]["reminders"] == ["TRIGGER:-PT30M"]
+
+    @pytest.mark.anyio
+    async def test_replace_reminders_persists_through_batch(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "t1",
+                    "projectId": "p1",
+                    "title": "Task",
+                    "dueDate": "2026-07-27T21:00:00.000+0000",
+                    "reminders": ["TRIGGER:-PT30M"],
+                },
+            )
+        )
+        route = mock_api.post(f"{V2_BASE}/batch/task").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _edit_task_v2(
+            client,
+            "t1",
+            "p1",
+            {
+                "taskId": "t1",
+                "projectId": "p1",
+                "reminders": ["TRIGGER:-PT1H", "TRIGGER:PT0S"],
+            },
+            None,
+            False,
+        )
+
+        assert result["reminders"] == ["TRIGGER:-PT1H", "TRIGGER:PT0S"]
+        payload = json.loads(route.calls.last.request.content)
+        assert payload["update"][0]["reminders"] == ["TRIGGER:-PT1H", "TRIGGER:PT0S"]
+
+    @pytest.mark.anyio
+    async def test_clear_reminders_persists_through_batch(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "t1",
+                    "projectId": "p1",
+                    "title": "Task",
+                    "reminders": ["TRIGGER:-PT30M"],
+                },
+            )
+        )
+        route = mock_api.post(f"{V2_BASE}/batch/task").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _edit_task_v2(
+            client,
+            "t1",
+            "p1",
+            {"taskId": "t1", "projectId": "p1", "reminders": []},
+            None,
+            False,
+        )
+
+        assert result["reminders"] == []
+        payload = json.loads(route.calls.last.request.content)
+        assert payload["update"][0]["reminders"] == []
+
+    @pytest.mark.anyio
+    async def test_recurring_edit_with_reminders(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "t1",
+                    "projectId": "p1",
+                    "title": "Task",
+                    "startDate": "2026-07-27T21:00:00.000+0000",
+                    "repeatFlag": "RRULE:FREQ=DAILY;INTERVAL=1",
+                    "reminders": ["TRIGGER:-PT30M"],
+                },
+            )
+        )
+        route = mock_api.post(f"{V2_BASE}/batch/task").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _edit_task_v2(
+            client,
+            "t1",
+            "p1",
+            {"taskId": "t1", "projectId": "p1", "reminders": ["TRIGGER:PT0S"]},
+            "RRULE:FREQ=WEEKLY;INTERVAL=1",
+            False,
+        )
+
+        assert result["repeatFlag"] == "RRULE:FREQ=WEEKLY;INTERVAL=1"
+        assert result["reminders"] == ["TRIGGER:PT0S"]
+        payload = json.loads(route.calls.last.request.content)
+        assert payload["update"][0]["repeatFirstDate"] == "2026-07-27T21:00:00.000+0000"
 
     @pytest.mark.anyio
     async def test_updates_multiple_tasks_through_one_batch_endpoint(

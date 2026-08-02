@@ -153,10 +153,26 @@ Plus 4 read-only **resources**: `ticktick://profile` · `ticktick://settings` ·
 | `unparent_task` | Remove a task from its parent |
 | `list_trash` | List deleted tasks |
 
-`add_task` and `edit_task` accept IANA timezone names such as
-`America/Chicago` and `Europe/Stockholm`. The package includes the IANA timezone
-database for systems without one, including Windows. Pass `timezone` with an
-all-day date to preserve the intended local calendar date:
+`add_task`, `add_tasks`, `edit_task`, and `edit_tasks` accept `reminders`.
+Use official TickTick trigger strings, bare ISO-8601 durations, or compact
+before-due offsets:
+
+```text
+add_task(title="Call dentist", due="2027-03-01T15:00", reminders=["30m", "PT0S"])
+add_task(title="Passport", due="2027-03-01", reminders=["TRIGGER:P0DT9H0M0S"])
+edit_task(task_id="...", project="Inbox", reminders=["1h"])
+edit_task(task_id="...", project="Inbox", clear_reminders=true)
+```
+
+Official trigger examples include `TRIGGER:PT0S` for the task time,
+`TRIGGER:-PT30M` for 30 minutes before, and `TRIGGER:P0DT9H0M0S` for a 9:00
+all-day reminder. Compact offsets such as `30m`, `1h`, and `1d` are converted
+to before-due triggers.
+
+The same task tools accept IANA timezone names such as `America/Chicago` and
+`Europe/Stockholm`. The package includes the IANA timezone database for systems
+without one, including Windows. Pass `timezone` with an all-day date to preserve
+the intended local calendar date:
 
 ```text
 add_task(title="Test", due="2027-03-01", all_day=true, timezone="America/Chicago")

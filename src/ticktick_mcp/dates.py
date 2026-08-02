@@ -196,6 +196,19 @@ def date_to_stamp(input_str: str) -> int:
 
 
 _EPOCH_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_REMINDER_TRIGGER_RE = re.compile(
+    r"^TRIGGER:(?:-?P(?=\d|T)(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+S)?)?|"
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?[+-]\d{4})$",
+    re.IGNORECASE,
+)
+_ISO_DURATION_RE = re.compile(
+    r"^-?P(?=\d|T)(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$",
+    re.IGNORECASE,
+)
+_SIMPLE_REMINDER_RE = re.compile(
+    r"^(?:(?P<days>\d+)d)?(?:(?P<hours>\d+)h)?(?:(?P<minutes>\d+)m)?(?:(?P<seconds>\d+)s)?$",
+    re.IGNORECASE,
+)
 
 
 def date_to_epoch_ms(input_str: str) -> int:
@@ -217,3 +230,60 @@ def date_to_epoch_ms(input_str: str) -> int:
 
     dt = datetime(d.year, d.month, d.day, tzinfo=UTC)
     return int(dt.timestamp() * 1000)
+
+
+def normalize_reminders(reminders: list[str]) -> list[str]:
+    """Normalize TickTick reminder triggers.
+
+    Accepts official TickTick/iCalendar trigger strings such as
+    "TRIGGER:PT0S" and "TRIGGER:P0DT9H0M0S", bare ISO-8601 durations such as
+    "PT30M", and compact relative offsets such as "30m", "1h", or "1d".
+    Compact offsets are interpreted as reminders before the task time.
+    """
+    if len(reminders) > 5:
+        raise ValueError("TickTick supports at most 5 reminders per task")
+
+    return [_normalize_reminder(reminder) for reminder in reminders]
+
+
+def _normalize_reminder(reminder: str) -> str:
+    value = reminder.strip()
+    if not value:
+        raise ValueError("Reminder must not be empty")
+
+    if value.upper().startswith("TRIGGER:"):
+        if not _REMINDER_TRIGGER_RE.match(value):
+            raise ValueError(
+                f"Invalid reminder '{reminder}': expected a TickTick trigger like "
+                "'TRIGGER:PT0S', 'TRIGGER:-PT30M', or 'TRIGGER:P0DT9H0M0S'"
+            )
+        return "TRIGGER:" + value.split(":", 1)[1].upper()
+
+    upper = value.upper()
+    if _ISO_DURATION_RE.match(upper):
+        return f"TRIGGER:{upper}"
+
+    match = _SIMPLE_REMINDER_RE.match(upper)
+    if not match or not any(match.groupdict().values()):
+        raise ValueError(
+            f"Invalid reminder '{reminder}': use a TickTick trigger, ISO-8601 duration, "
+            "or compact offset like '30m', '1h', or '1d'"
+        )
+
+    days = int(match.group("days") or 0)
+    hours = int(match.group("hours") or 0)
+    minutes = int(match.group("minutes") or 0)
+    seconds = int(match.group("seconds") or 0)
+    if days == hours == minutes == seconds == 0:
+        return "TRIGGER:PT0S"
+
+    date_part = f"{days}D" if days else ""
+    time_parts = []
+    if hours:
+        time_parts.append(f"{hours}H")
+    if minutes:
+        time_parts.append(f"{minutes}M")
+    if seconds:
+        time_parts.append(f"{seconds}S")
+    time_part = f"T{''.join(time_parts)}" if time_parts else ""
+    return f"TRIGGER:-P{date_part}{time_part}"

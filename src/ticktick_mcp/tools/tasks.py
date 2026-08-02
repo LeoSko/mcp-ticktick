@@ -7,7 +7,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 
 from ticktick_mcp.client import TickTickClient
-from ticktick_mcp.dates import ParsedDateTime, parse_datetime, parse_duration
+from ticktick_mcp.dates import ParsedDateTime, normalize_reminders, parse_datetime, parse_duration
 from ticktick_mcp.models import Project
 from ticktick_mcp.resolve import resolve_name
 
@@ -157,6 +157,7 @@ async def _build_add_task_body(
     content: str | None = None,
     desc: str | None = None,
     items: list[str] | None = None,
+    reminders: list[str] | None = None,
     all_day: bool | None = None,
     timezone: str | None = None,
 ) -> dict[str, Any]:
@@ -177,6 +178,8 @@ async def _build_add_task_body(
         body["desc"] = desc
     if items:
         body["items"] = [{"title": t, "status": 0} for t in items]
+    if reminders is not None:
+        body["reminders"] = normalize_reminders(reminders)
 
     parsed_due: ParsedDateTime | None = None
     parsed_start: ParsedDateTime | None = None
@@ -228,6 +231,8 @@ def _build_edit_task_updates(
     desc: str | None = None,
     clear_due: bool = False,
     clear_start: bool = False,
+    reminders: list[str] | None = None,
+    clear_reminders: bool = False,
     timezone: str | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {"taskId": task_id, "projectId": project_id}
@@ -240,6 +245,12 @@ def _build_edit_task_updates(
         body["content"] = content
     if desc is not None:
         body["desc"] = desc
+    if reminders is not None and clear_reminders:
+        raise ToolError("Use either reminders or clear_reminders, not both")
+    if clear_reminders:
+        body["reminders"] = []
+    elif reminders is not None:
+        body["reminders"] = normalize_reminders(reminders)
 
     if priority is not None:
         body["priority"] = _priority_value(priority)
@@ -366,6 +377,7 @@ def register(mcp: FastMCP) -> None:
         content: str | None = None,
         desc: str | None = None,
         items: list[str] | None = None,
+        reminders: list[str] | None = None,
         all_day: bool | None = None,
         timezone: str | None = None,
     ) -> dict[str, Any]:
@@ -382,6 +394,10 @@ def register(mcp: FastMCP) -> None:
             content: Markdown content/notes for the task.
             desc: Plain text description.
             items: List of checklist item titles.
+            reminders: List of reminder triggers. Accepts official TickTick triggers
+                such as "TRIGGER:PT0S" or "TRIGGER:-PT30M", bare ISO-8601 durations
+                such as "PT30M", and compact before-due offsets such as "30m",
+                "1h", or "1d".
             all_day: Whether this is an all-day task. Auto-detected from date format.
             timezone: IANA timezone name (e.g. "America/Chicago"). Defaults to system timezone.
         """
@@ -398,6 +414,7 @@ def register(mcp: FastMCP) -> None:
             content=content,
             desc=desc,
             items=items,
+            reminders=reminders,
             all_day=all_day,
             timezone=timezone,
         )
@@ -425,7 +442,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             tasks: Task objects to create. Each object requires title and may include
                 project, due, start, duration, priority, tags, content, desc, items,
-                all_day, and timezone.
+                reminders, all_day, and timezone.
             project: Default project name or ID for every task.
         """
         client = _get_client(ctx)
@@ -447,6 +464,7 @@ def register(mcp: FastMCP) -> None:
                 content=task.get("content"),
                 desc=task.get("desc"),
                 items=task.get("items"),
+                reminders=task.get("reminders"),
                 all_day=task.get("all_day"),
                 timezone=task.get("timezone"),
             )
@@ -475,6 +493,8 @@ def register(mcp: FastMCP) -> None:
         desc: str | None = None,
         clear_due: bool = False,
         clear_start: bool = False,
+        reminders: list[str] | None = None,
+        clear_reminders: bool = False,
         timezone: str | None = None,
         repeat: str | None = None,
         clear_repeat: bool = False,
@@ -497,6 +517,11 @@ def register(mcp: FastMCP) -> None:
             desc: New plain text description.
             clear_due: Set to true to remove the due date.
             clear_start: Set to true to remove the start date.
+            reminders: Replace task reminders. Accepts official TickTick triggers
+                such as "TRIGGER:PT0S" or "TRIGGER:-PT30M", bare ISO-8601 durations
+                such as "PT30M", and compact before-due offsets such as "30m",
+                "1h", or "1d".
+            clear_reminders: Set to true to remove all reminders.
             timezone: IANA timezone for date interpretation.
             repeat: New RFC 5545 RRULE, including the "RRULE:" prefix.
             clear_repeat: Set to true to make the task non-repeating.
@@ -519,6 +544,8 @@ def register(mcp: FastMCP) -> None:
             desc=desc,
             clear_due=clear_due,
             clear_start=clear_start,
+            reminders=reminders,
+            clear_reminders=clear_reminders,
             timezone=timezone,
         )
 
@@ -546,7 +573,8 @@ def register(mcp: FastMCP) -> None:
             project: Project name or ID containing the tasks.
             tasks: Task update objects. Each object requires task_id and may include
                 title, due, start, priority, tags, content, desc, clear_due,
-                clear_start, timezone, repeat, and clear_repeat.
+                clear_start, reminders, clear_reminders, timezone, repeat, and
+                clear_repeat.
         """
         client = _get_client(ctx)
         pid = await _resolve_project_id(client, project)
@@ -573,6 +601,8 @@ def register(mcp: FastMCP) -> None:
                 desc=task.get("desc"),
                 clear_due=task.get("clear_due", False),
                 clear_start=task.get("clear_start", False),
+                reminders=task.get("reminders"),
+                clear_reminders=task.get("clear_reminders", False),
                 timezone=task.get("timezone"),
             )
             edits.append(
