@@ -187,6 +187,25 @@ Official trigger examples include `TRIGGER:PT0S` for the task time,
 all-day reminder. Compact offsets such as `30m`, `1h`, and `1d` are converted
 to before-due triggers.
 
+`add_task`, `add_tasks`, `edit_task`, and `edit_tasks` also accept recurring
+task rules through `repeat`. Use RFC 5545 RRULE strings with the `RRULE:`
+prefix. Supported frequencies are `DAILY`, `WEEKLY`, `MONTHLY`, and `YEARLY`,
+with common parts such as `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY`,
+`BYMONTHDAY`, `BYMONTH`, and `WKST`:
+
+```text
+add_task(title="Standup", due="2027-03-01T09:00", repeat="RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,WE,FR", timezone="Europe/Stockholm")
+edit_task(task_id="...", project="Inbox", repeat="RRULE:FREQ=MONTHLY;INTERVAL=1")
+edit_task(task_id="...", project="Inbox", clear_repeat=true)
+```
+
+Recurring tasks require a start or due date. `repeat_from` currently supports
+the due-date origin only (`due_date` or `1`), which is the TickTick web default
+verified for create and edit. Completion-date repeat origins and per-instance
+recurrence exceptions are not exposed yet because TickTick represents them
+through generated occurrence state that has not been validated as a stable
+standalone API.
+
 The same task tools accept IANA timezone names such as `America/Chicago` and
 `Europe/Stockholm`. The package includes the IANA timezone database for systems
 without one, including Windows. Pass `timezone` with an all-day date to preserve

@@ -13,6 +13,18 @@ from ticktick_mcp.models import Project
 from ticktick_mcp.resolve import resolve_name
 
 PRIORITY_MAP = {"none": 0, "low": 1, "medium": 3, "high": 5}
+RRULE_FREQS = {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
+RRULE_KEYS = {
+    "FREQ",
+    "INTERVAL",
+    "COUNT",
+    "UNTIL",
+    "BYDAY",
+    "BYMONTHDAY",
+    "BYMONTH",
+    "WKST",
+}
+WEEKDAYS = {"MO", "TU", "WE", "TH", "FR", "SA", "SU"}
 
 
 def _get_client(ctx: Context) -> TickTickClient:
@@ -183,9 +195,12 @@ async def _edit_task_v2(
     updates: dict[str, Any],
     repeat: str | None,
     clear_repeat: bool,
+    repeat_from: str | None = None,
 ) -> dict[str, Any]:
     """Update a task through the v2 batch endpoint used by the web UI."""
-    task = await _prepare_edit_task_v2(client, task_id, project_id, updates, repeat, clear_repeat)
+    task = await _prepare_edit_task_v2(
+        client, task_id, project_id, updates, repeat, clear_repeat, repeat_from
+    )
 
     payload = {
         "add": [],
@@ -206,6 +221,7 @@ async def _prepare_edit_task_v2(
     updates: dict[str, Any],
     repeat: str | None,
     clear_repeat: bool,
+    repeat_from: str | None = None,
 ) -> dict[str, Any]:
     """Fetch and merge a task update without posting it."""
     task = await client.v1_get(f"/project/{project_id}/task/{task_id}")
@@ -216,15 +232,18 @@ async def _prepare_edit_task_v2(
     if clear_repeat:
         task["repeatFlag"] = None
         task["repeatFirstDate"] = task.get("startDate") or task.get("dueDate")
+        task["repeatFrom"] = None
     elif repeat is not None:
-        if not repeat.upper().startswith("RRULE:"):
-            raise ToolError("Repeat must be an RRULE string beginning with 'RRULE:'")
         first_date = task.get("startDate") or task.get("dueDate")
         if not first_date:
             raise ToolError("A repeating task requires a start or due date")
-        task["repeatFlag"] = repeat
+        task["repeatFlag"] = _normalize_repeat_rule(repeat)
         task["repeatFirstDate"] = first_date
-        task.setdefault("repeatFrom", "1")
+        task["repeatFrom"] = _normalize_repeat_from(repeat_from)
+    elif repeat_from is not None:
+        if not task.get("repeatFlag"):
+            raise ToolError("repeat_from requires an existing repeat rule or repeat")
+        task["repeatFrom"] = _normalize_repeat_from(repeat_from)
 
     if "startDate" in updates or "dueDate" in updates:
         task["repeatFirstDate"] = task.get("startDate") or task.get("dueDate")
@@ -246,6 +265,7 @@ async def _edit_tasks_v2(
             edit["updates"],
             edit.get("repeat"),
             edit.get("clear_repeat", False),
+            edit.get("repeat_from"),
         )
         for edit in edits
     ]
@@ -269,6 +289,76 @@ def _priority_value(priority: str) -> int:
     return pri_val
 
 
+def _normalize_repeat_rule(repeat: str) -> str:
+    rule = repeat.strip().upper()
+    if not rule.startswith("RRULE:"):
+        raise ToolError("Repeat must be an RRULE string beginning with 'RRULE:'")
+
+    body = rule.removeprefix("RRULE:")
+    if not body:
+        raise ToolError("Repeat RRULE must include FREQ")
+
+    parts: dict[str, str] = {}
+    for part in body.split(";"):
+        if not part or "=" not in part:
+            raise ToolError("Repeat RRULE parts must use KEY=VALUE")
+        key, value = part.split("=", 1)
+        if not key or not value:
+            raise ToolError("Repeat RRULE parts must use KEY=VALUE")
+        if key not in RRULE_KEYS:
+            raise ToolError(f"Unsupported RRULE part '{key}'")
+        if key in parts:
+            raise ToolError(f"Duplicate RRULE part '{key}'")
+        parts[key] = value
+
+    freq = parts.get("FREQ")
+    if freq not in RRULE_FREQS:
+        raise ToolError("Repeat RRULE requires FREQ=DAILY, WEEKLY, MONTHLY, or YEARLY")
+
+    for key in ("INTERVAL", "COUNT"):
+        if key in parts and (not parts[key].isdigit() or int(parts[key]) <= 0):
+            raise ToolError(f"RRULE {key} must be a positive integer")
+
+    if "BYMONTH" in parts:
+        _validate_rrule_int_list("BYMONTH", parts["BYMONTH"], 1, 12)
+    if "BYMONTHDAY" in parts:
+        _validate_rrule_int_list("BYMONTHDAY", parts["BYMONTHDAY"], 1, 31)
+    if "BYDAY" in parts:
+        _validate_rrule_byday(parts["BYDAY"])
+    if "WKST" in parts and parts["WKST"] not in WEEKDAYS:
+        raise ToolError("RRULE WKST must be one of MO, TU, WE, TH, FR, SA, SU")
+
+    return "RRULE:" + ";".join(f"{key}={value}" for key, value in parts.items())
+
+
+def _validate_rrule_int_list(key: str, value: str, minimum: int, maximum: int) -> None:
+    for item in value.split(","):
+        if not item.isdigit():
+            raise ToolError(f"RRULE {key} must contain integers")
+        number = int(item)
+        if number < minimum or number > maximum:
+            raise ToolError(f"RRULE {key} values must be between {minimum} and {maximum}")
+
+
+def _validate_rrule_byday(value: str) -> None:
+    for item in value.split(","):
+        day = item[-2:]
+        prefix = item[:-2]
+        if day not in WEEKDAYS:
+            raise ToolError("RRULE BYDAY must use weekdays MO, TU, WE, TH, FR, SA, SU")
+        if prefix and (not prefix.lstrip("+-").isdigit() or int(prefix) == 0):
+            raise ToolError("RRULE BYDAY ordinals must be non-zero integers")
+
+
+def _normalize_repeat_from(repeat_from: str | None) -> str:
+    if repeat_from is None:
+        return "1"
+    value = repeat_from.strip().lower()
+    if value in {"1", "due", "due_date", "due-date"}:
+        return "1"
+    raise ToolError("repeat_from currently supports only due_date")
+
+
 async def _build_add_task_body(
     client: TickTickClient,
     *,
@@ -285,6 +375,8 @@ async def _build_add_task_body(
     reminders: list[str] | None = None,
     all_day: bool | None = None,
     timezone: str | None = None,
+    repeat: str | None = None,
+    repeat_from: str | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {"title": title}
 
@@ -339,6 +431,14 @@ async def _build_add_task_body(
 
     if timezone:
         body["timeZone"] = timezone
+
+    if repeat is not None:
+        first_date = body.get("startDate") or body.get("dueDate")
+        if not first_date:
+            raise ToolError("A repeating task requires a start or due date")
+        body["repeatFlag"] = _normalize_repeat_rule(repeat)
+        body["repeatFirstDate"] = first_date
+        body["repeatFrom"] = _normalize_repeat_from(repeat_from)
 
     return body
 
@@ -640,6 +740,8 @@ def register(mcp: FastMCP) -> None:
         reminders: list[str] | None = None,
         all_day: bool | None = None,
         timezone: str | None = None,
+        repeat: str | None = None,
+        repeat_from: str | None = None,
     ) -> dict[str, Any]:
         """Create a new task in TickTick.
 
@@ -660,6 +762,8 @@ def register(mcp: FastMCP) -> None:
                 "1h", or "1d".
             all_day: Whether this is an all-day task. Auto-detected from date format.
             timezone: IANA timezone name (e.g. "America/Chicago"). Defaults to system timezone.
+            repeat: RFC 5545 RRULE, including the "RRULE:" prefix.
+            repeat_from: Repeat origin. Currently supports "due_date" (default) or "1".
         """
         client = _get_client(ctx)
         body = await _build_add_task_body(
@@ -677,6 +781,8 @@ def register(mcp: FastMCP) -> None:
             reminders=reminders,
             all_day=all_day,
             timezone=timezone,
+            repeat=repeat,
+            repeat_from=repeat_from,
         )
 
         return await client.v1_post("/task", body)
@@ -702,7 +808,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             tasks: Task objects to create. Each object requires title and may include
                 project, due, start, duration, priority, tags, content, desc, items,
-                reminders, all_day, and timezone.
+                reminders, all_day, timezone, repeat, and repeat_from.
             project: Default project name or ID for every task.
         """
         client = _get_client(ctx)
@@ -727,6 +833,8 @@ def register(mcp: FastMCP) -> None:
                 reminders=task.get("reminders"),
                 all_day=task.get("all_day"),
                 timezone=task.get("timezone"),
+                repeat=task.get("repeat"),
+                repeat_from=task.get("repeat_from"),
             )
             created.append(await client.v1_post("/task", body))
 
@@ -757,6 +865,7 @@ def register(mcp: FastMCP) -> None:
         clear_reminders: bool = False,
         timezone: str | None = None,
         repeat: str | None = None,
+        repeat_from: str | None = None,
         clear_repeat: bool = False,
     ) -> dict[str, Any]:
         """Update an existing task.
@@ -784,6 +893,7 @@ def register(mcp: FastMCP) -> None:
             clear_reminders: Set to true to remove all reminders.
             timezone: IANA timezone for date interpretation.
             repeat: New RFC 5545 RRULE, including the "RRULE:" prefix.
+            repeat_from: Repeat origin. Currently supports "due_date" (default) or "1".
             clear_repeat: Set to true to make the task non-repeating.
         """
         client = _get_client(ctx)
@@ -809,7 +919,7 @@ def register(mcp: FastMCP) -> None:
             timezone=timezone,
         )
 
-        return await _edit_task_v2(client, task_id, pid, body, repeat, clear_repeat)
+        return await _edit_task_v2(client, task_id, pid, body, repeat, clear_repeat, repeat_from)
 
     @mcp.tool(
         annotations={
@@ -833,8 +943,8 @@ def register(mcp: FastMCP) -> None:
             project: Project name or ID containing the tasks.
             tasks: Task update objects. Each object requires task_id and may include
                 title, due, start, priority, tags, content, desc, clear_due,
-                clear_start, reminders, clear_reminders, timezone, repeat, and
-                clear_repeat.
+                clear_start, reminders, clear_reminders, timezone, repeat,
+                repeat_from, and clear_repeat.
         """
         client = _get_client(ctx)
         pid = await _resolve_project_id(client, project)
@@ -870,6 +980,7 @@ def register(mcp: FastMCP) -> None:
                     "task_id": task_id,
                     "updates": updates,
                     "repeat": repeat,
+                    "repeat_from": task.get("repeat_from"),
                     "clear_repeat": clear_repeat,
                 }
             )

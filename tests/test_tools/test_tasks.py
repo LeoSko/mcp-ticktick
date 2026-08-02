@@ -102,6 +102,77 @@ class TestAddTask:
         assert body["timeZone"] == "Europe/Stockholm"
         assert body["reminders"] == ["TRIGGER:P0DT9H0M0S"]
 
+    @pytest.mark.anyio
+    async def test_create_with_timed_repeat(self, client: TickTickClient):
+        body = await _build_add_task_body(
+            client,
+            title="Standup",
+            due="2026-02-16T14:30",
+            repeat="rrule:freq=weekly;interval=1;byday=mo,we,fr",
+            timezone="UTC",
+        )
+
+        assert body["dueDate"] == "2026-02-16T14:30:00.000+0000"
+        assert body["isAllDay"] is False
+        assert body["repeatFlag"] == "RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,WE,FR"
+        assert body["repeatFirstDate"] == "2026-02-16T14:30:00.000+0000"
+        assert body["repeatFrom"] == "1"
+
+    @pytest.mark.anyio
+    async def test_create_with_all_day_repeat(self, client: TickTickClient):
+        body = await _build_add_task_body(
+            client,
+            title="Review",
+            due="2026-02-16",
+            repeat="RRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=16",
+            timezone="Europe/Stockholm",
+        )
+
+        assert body["isAllDay"] is True
+        assert body["timeZone"] == "Europe/Stockholm"
+        assert body["repeatFlag"] == "RRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=16"
+        assert body["repeatFirstDate"] == body["dueDate"]
+
+    @pytest.mark.anyio
+    async def test_repeat_requires_date(self, client: TickTickClient):
+        with pytest.raises(ToolError, match="requires a start or due date"):
+            await _build_add_task_body(
+                client,
+                title="No date",
+                repeat="RRULE:FREQ=DAILY;INTERVAL=1",
+            )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "repeat",
+        [
+            "FREQ=DAILY",
+            "RRULE:FREQ=HOURLY",
+            "RRULE:FREQ=DAILY;INTERVAL=0",
+            "RRULE:FREQ=WEEKLY;BYDAY=XY",
+            "RRULE:FREQ=DAILY;BYHOUR=9",
+        ],
+    )
+    async def test_rejects_invalid_repeat(self, client: TickTickClient, repeat: str):
+        with pytest.raises(ToolError):
+            await _build_add_task_body(
+                client,
+                title="Bad repeat",
+                due="2026-02-16",
+                repeat=repeat,
+            )
+
+    @pytest.mark.anyio
+    async def test_rejects_unsupported_repeat_origin(self, client: TickTickClient):
+        with pytest.raises(ToolError, match="supports only due_date"):
+            await _build_add_task_body(
+                client,
+                title="Bad origin",
+                due="2026-02-16",
+                repeat="RRULE:FREQ=DAILY",
+                repeat_from="completed_time",
+            )
+
 
 class TestEditTask:
     @pytest.mark.anyio
@@ -198,7 +269,7 @@ class TestEditTask:
             "t1",
             "p1",
             {"taskId": "t1", "projectId": "p1"},
-            "RRULE:FREQ=DAILY;INTERVAL=14",
+            "rrule:freq=daily;interval=14",
             False,
         )
 
@@ -237,6 +308,28 @@ class TestEditTask:
 
         assert result["repeatFlag"] is None
         assert result["repeatFirstDate"] == "2026-07-27T21:00:00.000+0000"
+        assert result["repeatFrom"] is None
+
+    @pytest.mark.anyio
+    async def test_rejects_repeat_without_date(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={"id": "t1", "projectId": "p1", "title": "Task"},
+            )
+        )
+
+        with pytest.raises(ToolError, match="requires a start or due date"):
+            await _edit_task_v2(
+                client,
+                "t1",
+                "p1",
+                {"taskId": "t1", "projectId": "p1"},
+                "RRULE:FREQ=DAILY",
+                False,
+            )
 
     def test_build_replace_reminders(self):
         updates = _build_edit_task_updates(
@@ -435,6 +528,42 @@ class TestEditTask:
         assert [task["title"] for task in payload["update"]] == ["New 1", "Old 2"]
         assert payload["update"][1]["priority"] == 3
         assert len(route.calls) == 1
+
+    @pytest.mark.anyio
+    async def test_updates_batch_repeat_origin(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "t1",
+                    "projectId": "p1",
+                    "title": "Task",
+                    "dueDate": "2026-07-27T21:00:00.000+0000",
+                },
+            )
+        )
+        route = mock_api.post(f"{V2_BASE}/batch/task").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _edit_tasks_v2(
+            client,
+            "p1",
+            [
+                {
+                    "task_id": "t1",
+                    "updates": {"taskId": "t1"},
+                    "repeat": "RRULE:FREQ=YEARLY;INTERVAL=1",
+                    "repeat_from": "due_date",
+                }
+            ],
+        )
+
+        assert result[0]["repeatFrom"] == "1"
+        payload = json.loads(route.calls.last.request.content)
+        assert payload["update"][0]["repeatFirstDate"] == "2026-07-27T21:00:00.000+0000"
 
 
 class TestTaskComments:
