@@ -12,7 +12,7 @@
 A [Model Context Protocol](https://modelcontextprotocol.io/) server that gives LLMs broad access to [TickTick](https://ticktick.com).<br>
 Tasks, projects, habits, focus timers, tags, filters, and calendars.
 
-**45 tools** · **4 resources** · **Broad TickTick coverage**
+**49 tools** · **4 resources** · **Broad TickTick coverage**
 
 </div>
 
@@ -120,7 +120,7 @@ Add to your VS Code `settings.json`:
 
 | Domain | Tools | Highlights |
 |---|---|---|
-| **Tasks** | 10 | Create, edit, complete, delete, move, subtasks, trash |
+| **Tasks** | 14 | Create, edit, complete, delete, move, subtasks, trash, batch changes |
 | **Projects** | 5 | CRUD with fuzzy name matching |
 | **Tags** | 6 | Create, rename, merge, hierarchies |
 | **Folders** | 4 | Group projects into folders |
@@ -141,11 +141,15 @@ Plus 4 read-only **resources**: `ticktick://profile` · `ticktick://settings` ·
 | `list_tasks` | List tasks from a project or all projects |
 | `get_task` | Get a single task by ID |
 | `add_task` | Create a task with due date, priority, tags, checklist |
+| `add_tasks` | Create multiple tasks in one MCP call |
 | `edit_task` | Update task fields |
+| `edit_tasks` | Update multiple task fields in one batch request |
 | `complete_task` | Mark a task complete |
 | `delete_task` | Delete a task |
+| `delete_tasks` | Delete multiple tasks in one MCP call |
 | `move_task` | Move a task between projects |
 | `set_subtask` | Make a task a subtask of another |
+| `set_subtasks` | Make multiple tasks subtasks in one batch request |
 | `unparent_task` | Remove a task from its parent |
 | `list_trash` | List deleted tasks |
 

@@ -8,7 +8,7 @@ import pytest
 import respx
 
 from ticktick_mcp.client import V1_BASE, V2_BASE, TickTickClient
-from ticktick_mcp.tools.tasks import _edit_task_v2, _resolve_project_id
+from ticktick_mcp.tools.tasks import _edit_task_v2, _edit_tasks_v2, _resolve_project_id
 
 
 class TestListTasks:
@@ -198,6 +198,41 @@ class TestEditTask:
         assert result["repeatFlag"] is None
         assert result["repeatFirstDate"] == "2026-07-27T21:00:00.000+0000"
 
+    @pytest.mark.anyio
+    async def test_updates_multiple_tasks_through_one_batch_endpoint(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={"id": "t1", "projectId": "p1", "title": "Old 1"},
+            )
+        )
+        mock_api.get(f"{V1_BASE}/project/p1/task/t2").mock(
+            return_value=httpx.Response(
+                200,
+                json={"id": "t2", "projectId": "p1", "title": "Old 2"},
+            )
+        )
+        route = mock_api.post(f"{V2_BASE}/batch/task").mock(
+            return_value=httpx.Response(200, json={"id2etag": {"t1": "e1", "t2": "e2"}})
+        )
+
+        result = await _edit_tasks_v2(
+            client,
+            "p1",
+            [
+                {"task_id": "t1", "updates": {"taskId": "t1", "title": "New 1"}},
+                {"task_id": "t2", "updates": {"taskId": "t2", "priority": 3}},
+            ],
+        )
+
+        assert [task["id"] for task in result] == ["t1", "t2"]
+        payload = json.loads(route.calls.last.request.content)
+        assert [task["title"] for task in payload["update"]] == ["New 1", "Old 2"]
+        assert payload["update"][1]["priority"] == 3
+        assert len(route.calls) == 1
+
 
 class TestCompleteTask:
     @pytest.mark.anyio
@@ -215,6 +250,21 @@ class TestDeleteTask:
         mock_api.delete(f"{V1_BASE}/project/p1/task/t1").mock(return_value=httpx.Response(200))
         resp = await client.v1_delete("/project/p1/task/t1")
         assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_delete_multiple(self, client: TickTickClient, mock_api: respx.MockRouter):
+        route1 = mock_api.delete(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(200)
+        )
+        route2 = mock_api.delete(f"{V1_BASE}/project/p1/task/t2").mock(
+            return_value=httpx.Response(200)
+        )
+
+        await client.v1_delete("/project/p1/task/t1")
+        await client.v1_delete("/project/p1/task/t2")
+
+        assert len(route1.calls) == 1
+        assert len(route2.calls) == 1
 
 
 class TestMoveTask:
@@ -241,6 +291,24 @@ class TestSetSubtask:
             [{"taskId": "t2", "parentId": "t1", "projectId": "p1"}],
         )
         assert result["ok"] is True
+
+    @pytest.mark.anyio
+    async def test_set_multiple_parents(self, client: TickTickClient, mock_api: respx.MockRouter):
+        route = mock_api.post(f"{V2_BASE}/batch/taskParent").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+
+        result = await client.v2_post(
+            "/batch/taskParent",
+            [
+                {"taskId": "t2", "parentId": "t1", "projectId": "p1"},
+                {"taskId": "t3", "parentId": "t1", "projectId": "p1"},
+            ],
+        )
+
+        assert result["ok"] is True
+        payload = json.loads(route.calls.last.request.content)
+        assert [item["taskId"] for item in payload] == ["t2", "t3"]
 
 
 class TestListTrash:

@@ -60,6 +60,29 @@ async def _edit_task_v2(
     clear_repeat: bool,
 ) -> dict[str, Any]:
     """Update a task through the v2 batch endpoint used by the web UI."""
+    task = await _prepare_edit_task_v2(client, task_id, project_id, updates, repeat, clear_repeat)
+
+    payload = {
+        "add": [],
+        "update": [task],
+        "delete": [],
+        "addAttachments": [],
+        "updateAttachments": [],
+        "deleteAttachments": [],
+    }
+    await client.v2_post("/batch/task", payload)
+    return task
+
+
+async def _prepare_edit_task_v2(
+    client: TickTickClient,
+    task_id: str,
+    project_id: str,
+    updates: dict[str, Any],
+    repeat: str | None,
+    clear_repeat: bool,
+) -> dict[str, Any]:
+    """Fetch and merge a task update without posting it."""
     task = await client.v1_get(f"/project/{project_id}/task/{task_id}")
     task.update({key: value for key, value in updates.items() if key != "taskId"})
     task["id"] = task_id
@@ -81,16 +104,163 @@ async def _edit_task_v2(
     if "startDate" in updates or "dueDate" in updates:
         task["repeatFirstDate"] = task.get("startDate") or task.get("dueDate")
 
+    return task
+
+
+async def _edit_tasks_v2(
+    client: TickTickClient,
+    project_id: str,
+    edits: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Update multiple tasks through one v2 batch request."""
+    tasks = [
+        await _prepare_edit_task_v2(
+            client,
+            edit["task_id"],
+            project_id,
+            edit["updates"],
+            edit.get("repeat"),
+            edit.get("clear_repeat", False),
+        )
+        for edit in edits
+    ]
+
     payload = {
         "add": [],
-        "update": [task],
+        "update": tasks,
         "delete": [],
         "addAttachments": [],
         "updateAttachments": [],
         "deleteAttachments": [],
     }
     await client.v2_post("/batch/task", payload)
-    return task
+    return tasks
+
+
+def _priority_value(priority: str) -> int:
+    pri_val = PRIORITY_MAP.get(priority.lower())
+    if pri_val is None:
+        raise ToolError(f"Invalid priority '{priority}'. Use: none, low, medium, high")
+    return pri_val
+
+
+async def _build_add_task_body(
+    client: TickTickClient,
+    *,
+    title: str,
+    project: str | None = None,
+    due: str | None = None,
+    start: str | None = None,
+    duration: str | None = None,
+    priority: str = "none",
+    tags: list[str] | None = None,
+    content: str | None = None,
+    desc: str | None = None,
+    items: list[str] | None = None,
+    all_day: bool | None = None,
+    timezone: str | None = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"title": title}
+
+    if project:
+        body["projectId"] = await _resolve_project_id(client, project)
+
+    pri_val = _priority_value(priority)
+    if pri_val != 0:
+        body["priority"] = pri_val
+
+    if tags:
+        body["tags"] = tags
+    if content is not None:
+        body["content"] = content
+    if desc is not None:
+        body["desc"] = desc
+    if items:
+        body["items"] = [{"title": t, "status": 0} for t in items]
+
+    parsed_due: ParsedDateTime | None = None
+    parsed_start: ParsedDateTime | None = None
+
+    if due:
+        parsed_due = parse_datetime(due)
+        body["dueDate"] = parsed_due.to_api_string(timezone)
+        if all_day is None:
+            body["isAllDay"] = parsed_due.is_all_day
+        else:
+            body["isAllDay"] = all_day
+
+    if start:
+        parsed_start = parse_datetime(start)
+        body["startDate"] = parsed_start.to_api_string(timezone)
+        if all_day is None and "isAllDay" not in body:
+            body["isAllDay"] = parsed_start.is_all_day
+
+    if duration:
+        dur = parse_duration(duration)
+        base = parsed_start or parsed_due
+        if base is None:
+            raise ToolError("Duration requires a start or due date with a time component")
+        if base.is_all_day:
+            raise ToolError("Duration requires a date with a time component (use YYYY-MM-DDTHH:MM)")
+        end = base.add_duration(dur)
+        if parsed_start and not parsed_due:
+            body["dueDate"] = end.to_api_string(timezone)
+        elif parsed_due and not parsed_start:
+            body["startDate"] = parsed_due.to_api_string(timezone)
+            body["dueDate"] = end.to_api_string(timezone)
+
+    if timezone:
+        body["timeZone"] = timezone
+
+    return body
+
+
+def _build_edit_task_updates(
+    *,
+    task_id: str,
+    project_id: str,
+    title: str | None = None,
+    due: str | None = None,
+    start: str | None = None,
+    priority: str | None = None,
+    tags: list[str] | None = None,
+    content: str | None = None,
+    desc: str | None = None,
+    clear_due: bool = False,
+    clear_start: bool = False,
+    timezone: str | None = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"taskId": task_id, "projectId": project_id}
+
+    if title is not None:
+        body["title"] = title
+    if tags is not None:
+        body["tags"] = tags
+    if content is not None:
+        body["content"] = content
+    if desc is not None:
+        body["desc"] = desc
+
+    if priority is not None:
+        body["priority"] = _priority_value(priority)
+
+    if clear_due:
+        body["dueDate"] = None
+    elif due:
+        parsed = parse_datetime(due)
+        body["dueDate"] = parsed.to_api_string(timezone)
+        body["isAllDay"] = parsed.is_all_day
+
+    if clear_start:
+        body["startDate"] = None
+    elif start:
+        parsed = parse_datetime(start)
+        body["startDate"] = parsed.to_api_string(timezone)
+
+    if timezone:
+        body["timeZone"] = timezone
+
+    return body
 
 
 def register(mcp: FastMCP) -> None:
@@ -216,64 +386,73 @@ def register(mcp: FastMCP) -> None:
             timezone: IANA timezone name (e.g. "America/Chicago"). Defaults to system timezone.
         """
         client = _get_client(ctx)
-        body: dict[str, Any] = {"title": title}
-
-        if project:
-            body["projectId"] = await _resolve_project_id(client, project)
-
-        pri_val = PRIORITY_MAP.get(priority.lower())
-        if pri_val is None:
-            raise ToolError(f"Invalid priority '{priority}'. Use: none, low, medium, high")
-        if pri_val != 0:
-            body["priority"] = pri_val
-
-        if tags:
-            body["tags"] = tags
-        if content is not None:
-            body["content"] = content
-        if desc is not None:
-            body["desc"] = desc
-        if items:
-            body["items"] = [{"title": t, "status": 0} for t in items]
-
-        # Date handling
-        parsed_due: ParsedDateTime | None = None
-        parsed_start: ParsedDateTime | None = None
-
-        if due:
-            parsed_due = parse_datetime(due)
-            body["dueDate"] = parsed_due.to_api_string(timezone)
-            if all_day is None:
-                body["isAllDay"] = parsed_due.is_all_day
-            else:
-                body["isAllDay"] = all_day
-
-        if start:
-            parsed_start = parse_datetime(start)
-            body["startDate"] = parsed_start.to_api_string(timezone)
-            if all_day is None and "isAllDay" not in body:
-                body["isAllDay"] = parsed_start.is_all_day
-
-        if duration:
-            dur = parse_duration(duration)
-            base = parsed_start or parsed_due
-            if base is None:
-                raise ToolError("Duration requires a start or due date with a time component")
-            if base.is_all_day:
-                raise ToolError(
-                    "Duration requires a date with a time component (use YYYY-MM-DDTHH:MM)"
-                )
-            end = base.add_duration(dur)
-            if parsed_start and not parsed_due:
-                body["dueDate"] = end.to_api_string(timezone)
-            elif parsed_due and not parsed_start:
-                body["startDate"] = parsed_due.to_api_string(timezone)
-                body["dueDate"] = end.to_api_string(timezone)
-
-        if timezone:
-            body["timeZone"] = timezone
+        body = await _build_add_task_body(
+            client,
+            title=title,
+            project=project,
+            due=due,
+            start=start,
+            duration=duration,
+            priority=priority,
+            tags=tags,
+            content=content,
+            desc=desc,
+            items=items,
+            all_day=all_day,
+            timezone=timezone,
+        )
 
         return await client.v1_post("/task", body)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
+    async def add_tasks(
+        ctx: Context,
+        tasks: list[dict[str, Any]],
+        project: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Create multiple tasks in one MCP call.
+
+        Each item accepts the same fields as add_task. The top-level project is
+        used as the default, and an item-level project overrides it.
+
+        Args:
+            tasks: Task objects to create. Each object requires title and may include
+                project, due, start, duration, priority, tags, content, desc, items,
+                all_day, and timezone.
+            project: Default project name or ID for every task.
+        """
+        client = _get_client(ctx)
+        created: list[dict[str, Any]] = []
+
+        for i, task in enumerate(tasks):
+            title = task.get("title")
+            if not isinstance(title, str) or not title:
+                raise ToolError(f"tasks[{i}].title is required")
+            body = await _build_add_task_body(
+                client,
+                title=title,
+                project=task.get("project") or project,
+                due=task.get("due"),
+                start=task.get("start"),
+                duration=task.get("duration"),
+                priority=task.get("priority", "none"),
+                tags=task.get("tags"),
+                content=task.get("content"),
+                desc=task.get("desc"),
+                items=task.get("items"),
+                all_day=task.get("all_day"),
+                timezone=task.get("timezone"),
+            )
+            created.append(await client.v1_post("/task", body))
+
+        return created
 
     @mcp.tool(
         annotations={
@@ -324,43 +503,88 @@ def register(mcp: FastMCP) -> None:
         """
         client = _get_client(ctx)
         pid = await _resolve_project_id(client, project)
-        body: dict[str, Any] = {"taskId": task_id, "projectId": pid}
 
         if repeat is not None and clear_repeat:
             raise ToolError("Use either repeat or clear_repeat, not both")
 
-        if title is not None:
-            body["title"] = title
-        if tags is not None:
-            body["tags"] = tags
-        if content is not None:
-            body["content"] = content
-        if desc is not None:
-            body["desc"] = desc
-
-        if priority is not None:
-            pri_val = PRIORITY_MAP.get(priority.lower())
-            if pri_val is None:
-                raise ToolError(f"Invalid priority '{priority}'. Use: none, low, medium, high")
-            body["priority"] = pri_val
-
-        if clear_due:
-            body["dueDate"] = None
-        elif due:
-            parsed = parse_datetime(due)
-            body["dueDate"] = parsed.to_api_string(timezone)
-            body["isAllDay"] = parsed.is_all_day
-
-        if clear_start:
-            body["startDate"] = None
-        elif start:
-            parsed = parse_datetime(start)
-            body["startDate"] = parsed.to_api_string(timezone)
-
-        if timezone:
-            body["timeZone"] = timezone
+        body = _build_edit_task_updates(
+            task_id=task_id,
+            project_id=pid,
+            title=title,
+            due=due,
+            start=start,
+            priority=priority,
+            tags=tags,
+            content=content,
+            desc=desc,
+            clear_due=clear_due,
+            clear_start=clear_start,
+            timezone=timezone,
+        )
 
         return await _edit_task_v2(client, task_id, pid, body, repeat, clear_repeat)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
+    async def edit_tasks(
+        ctx: Context,
+        project: str,
+        tasks: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Update multiple tasks in one v2 batch request.
+
+        Each item accepts the same editable fields as edit_task and requires
+        task_id. All tasks must be in the same project.
+
+        Args:
+            project: Project name or ID containing the tasks.
+            tasks: Task update objects. Each object requires task_id and may include
+                title, due, start, priority, tags, content, desc, clear_due,
+                clear_start, timezone, repeat, and clear_repeat.
+        """
+        client = _get_client(ctx)
+        pid = await _resolve_project_id(client, project)
+        edits: list[dict[str, Any]] = []
+
+        for i, task in enumerate(tasks):
+            task_id = task.get("task_id")
+            if not isinstance(task_id, str) or not task_id:
+                raise ToolError(f"tasks[{i}].task_id is required")
+            repeat = task.get("repeat")
+            clear_repeat = task.get("clear_repeat", False)
+            if repeat is not None and clear_repeat:
+                raise ToolError(f"tasks[{i}] uses both repeat and clear_repeat")
+
+            updates = _build_edit_task_updates(
+                task_id=task_id,
+                project_id=pid,
+                title=task.get("title"),
+                due=task.get("due"),
+                start=task.get("start"),
+                priority=task.get("priority"),
+                tags=task.get("tags"),
+                content=task.get("content"),
+                desc=task.get("desc"),
+                clear_due=task.get("clear_due", False),
+                clear_start=task.get("clear_start", False),
+                timezone=task.get("timezone"),
+            )
+            edits.append(
+                {
+                    "task_id": task_id,
+                    "updates": updates,
+                    "repeat": repeat,
+                    "clear_repeat": clear_repeat,
+                }
+            )
+
+        return await _edit_tasks_v2(client, pid, edits)
 
     @mcp.tool(
         annotations={
@@ -412,6 +636,38 @@ def register(mcp: FastMCP) -> None:
         pid = await _resolve_project_id(client, project)
         await client.v1_delete(f"/project/{pid}/task/{task_id}")
         return f"Task {task_id} deleted"
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    async def delete_tasks(
+        ctx: Context,
+        task_ids: list[str],
+        project: str,
+    ) -> dict[str, Any]:
+        """Permanently delete multiple tasks in one MCP call.
+
+        This action cannot be undone. Each task is moved to trash first but this
+        API call removes it entirely.
+
+        Args:
+            task_ids: Task IDs to delete.
+            project: The project name or ID containing the tasks.
+        """
+        client = _get_client(ctx)
+        pid = await _resolve_project_id(client, project)
+        deleted: list[str] = []
+
+        for task_id in task_ids:
+            await client.v1_delete(f"/project/{pid}/task/{task_id}")
+            deleted.append(task_id)
+
+        return {"deleted": deleted}
 
     @mcp.tool(
         annotations={
@@ -473,6 +729,43 @@ def register(mcp: FastMCP) -> None:
             [{"taskId": task_id, "parentId": parent_id, "projectId": pid}],
         )
         return f"Task {task_id} is now a subtask of {parent_id}"
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    async def set_subtasks(
+        ctx: Context,
+        project: str,
+        assignments: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        """Make multiple tasks subtasks in one TickTick batch request.
+
+        All tasks and parents must be in the same project.
+
+        Args:
+            project: The project name or ID containing all tasks.
+            assignments: Objects with task_id and parent_id.
+        """
+        client = _get_client(ctx)
+        pid = await _resolve_project_id(client, project)
+        payload: list[dict[str, str]] = []
+
+        for i, assignment in enumerate(assignments):
+            task_id = assignment.get("task_id")
+            parent_id = assignment.get("parent_id")
+            if not task_id:
+                raise ToolError(f"assignments[{i}].task_id is required")
+            if not parent_id:
+                raise ToolError(f"assignments[{i}].parent_id is required")
+            payload.append({"taskId": task_id, "parentId": parent_id, "projectId": pid})
+
+        result = await client.v2_post("/batch/taskParent", payload)
+        return {"assignments": payload, "result": result}
 
     @mcp.tool(
         annotations={
