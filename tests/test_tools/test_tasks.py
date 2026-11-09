@@ -349,6 +349,47 @@ class TestEditTask:
 
         assert updates["reminders"] == []
 
+    def test_build_sort_order(self):
+        updates = _build_edit_task_updates(
+            task_id="t1",
+            project_id="p1",
+            sort_order=-700 * 2**40,
+        )
+
+        assert updates["sortOrder"] == -700 * 2**40
+
+    def test_build_omits_sort_order_by_default(self):
+        updates = _build_edit_task_updates(task_id="t1", project_id="p1")
+
+        assert "sortOrder" not in updates
+
+    @pytest.mark.anyio
+    async def test_sends_sort_order_in_batch_update(
+        self, client: TickTickClient, mock_api: respx.MockRouter
+    ):
+        mock_api.get(f"{V1_BASE}/project/p1/task/t1").mock(
+            return_value=httpx.Response(
+                200,
+                json={"id": "t1", "projectId": "p1", "title": "Task", "sortOrder": 0},
+            )
+        )
+        route = mock_api.post(f"{V2_BASE}/batch/task").mock(
+            return_value=httpx.Response(200, json={"id2etag": {"t1": "new-etag"}})
+        )
+
+        await _edit_task_v2(
+            client,
+            "t1",
+            "p1",
+            {"taskId": "t1", "projectId": "p1", "sortOrder": -(2**40)},
+            None,
+            False,
+        )
+
+        payload = json.loads(route.calls.last.request.content)
+        assert payload["update"][0]["sortOrder"] == -(2**40)
+        assert payload["update"][0]["title"] == "Task"
+
     def test_rejects_replace_and_clear_reminders(self):
         with pytest.raises(ToolError, match="Use either reminders or clear_reminders"):
             _build_edit_task_updates(

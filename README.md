@@ -206,6 +206,15 @@ recurrence exceptions are not exposed yet because TickTick represents them
 through generated occurrence state that has not been validated as a stable
 standalone API.
 
+`edit_task` and `edit_tasks` accept `sort_order` to set a task's manual
+position. Lower values appear first. TickTick spaces positions by
+1099511627776 (2^40), so use multiples of it. The order shows only in views
+that use Custom sort; Date sort ignores it:
+
+```text
+edit_tasks(project="Dancing", tasks=[{"task_id": "...", "sort_order": -700 * 1099511627776}, {"task_id": "...", "sort_order": -699 * 1099511627776}])
+```
+
 The same task tools accept IANA timezone names such as `America/Chicago` and
 `Europe/Stockholm`. The package includes the IANA timezone database for systems
 without one, including Windows. Pass `timezone` with an all-day date to preserve
