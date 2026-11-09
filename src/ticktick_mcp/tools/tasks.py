@@ -377,8 +377,11 @@ async def _build_add_task_body(
     timezone: str | None = None,
     repeat: str | None = None,
     repeat_from: str | None = None,
+    sort_order: int | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {"title": title}
+    if sort_order is not None:
+        body["sortOrder"] = sort_order
 
     if project:
         body["projectId"] = await _resolve_project_id(client, project)
@@ -745,6 +748,7 @@ def register(mcp: FastMCP) -> None:
         timezone: str | None = None,
         repeat: str | None = None,
         repeat_from: str | None = None,
+        sort_order: int | None = None,
     ) -> dict[str, Any]:
         """Create a new task in TickTick.
 
@@ -767,6 +771,7 @@ def register(mcp: FastMCP) -> None:
             timezone: IANA timezone name (e.g. "America/Chicago"). Defaults to system timezone.
             repeat: RFC 5545 RRULE, including the "RRULE:" prefix.
             repeat_from: Repeat origin. Currently supports "due_date" (default) or "1".
+            sort_order: Manual position, as in edit_task.
         """
         client = _get_client(ctx)
         body = await _build_add_task_body(
@@ -786,6 +791,7 @@ def register(mcp: FastMCP) -> None:
             timezone=timezone,
             repeat=repeat,
             repeat_from=repeat_from,
+            sort_order=sort_order,
         )
 
         return await client.v1_post("/task", body)
@@ -811,7 +817,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             tasks: Task objects to create. Each object requires title and may include
                 project, due, start, duration, priority, tags, content, desc, items,
-                reminders, all_day, timezone, repeat, and repeat_from.
+                reminders, all_day, timezone, repeat, repeat_from, and sort_order.
             project: Default project name or ID for every task.
         """
         client = _get_client(ctx)
@@ -838,6 +844,7 @@ def register(mcp: FastMCP) -> None:
                 timezone=task.get("timezone"),
                 repeat=task.get("repeat"),
                 repeat_from=task.get("repeat_from"),
+                sort_order=task.get("sort_order"),
             )
             created.append(await client.v1_post("/task", body))
 
