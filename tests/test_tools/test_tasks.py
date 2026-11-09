@@ -89,6 +89,18 @@ class TestAddTask:
         assert body["reminders"] == ["TRIGGER:-PT30M", "TRIGGER:PT0S"]
 
     @pytest.mark.anyio
+    async def test_create_with_sort_order(self, client: TickTickClient):
+        body = await _build_add_task_body(client, title="First", sort_order=-(2**40))
+
+        assert body["sortOrder"] == -(2**40)
+
+    @pytest.mark.anyio
+    async def test_create_omits_sort_order_by_default(self, client: TickTickClient):
+        body = await _build_add_task_body(client, title="Plain")
+
+        assert "sortOrder" not in body
+
+    @pytest.mark.anyio
     async def test_create_with_all_day_reminder(self, client: TickTickClient):
         body = await _build_add_task_body(
             client,
