@@ -459,6 +459,7 @@ def _build_edit_task_updates(
     reminders: list[str] | None = None,
     clear_reminders: bool = False,
     timezone: str | None = None,
+    sort_order: int | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {"taskId": task_id, "projectId": project_id}
 
@@ -495,6 +496,8 @@ def _build_edit_task_updates(
 
     if timezone:
         body["timeZone"] = timezone
+    if sort_order is not None:
+        body["sortOrder"] = sort_order
 
     return body
 
@@ -867,6 +870,7 @@ def register(mcp: FastMCP) -> None:
         repeat: str | None = None,
         repeat_from: str | None = None,
         clear_repeat: bool = False,
+        sort_order: int | None = None,
     ) -> dict[str, Any]:
         """Update an existing task.
 
@@ -895,6 +899,9 @@ def register(mcp: FastMCP) -> None:
             repeat: New RFC 5545 RRULE, including the "RRULE:" prefix.
             repeat_from: Repeat origin. Currently supports "due_date" (default) or "1".
             clear_repeat: Set to true to make the task non-repeating.
+            sort_order: Manual position. Lower values appear first. TickTick spaces
+                positions by 1099511627776 (2**40); use multiples of it. The order
+                shows only in views with Custom sort, not Date sort.
         """
         client = _get_client(ctx)
         pid = await _resolve_project_id(client, project)
@@ -917,6 +924,7 @@ def register(mcp: FastMCP) -> None:
             reminders=reminders,
             clear_reminders=clear_reminders,
             timezone=timezone,
+            sort_order=sort_order,
         )
 
         return await _edit_task_v2(client, task_id, pid, body, repeat, clear_repeat, repeat_from)
@@ -944,7 +952,7 @@ def register(mcp: FastMCP) -> None:
             tasks: Task update objects. Each object requires task_id and may include
                 title, due, start, priority, tags, content, desc, clear_due,
                 clear_start, reminders, clear_reminders, timezone, repeat,
-                repeat_from, and clear_repeat.
+                repeat_from, clear_repeat, and sort_order.
         """
         client = _get_client(ctx)
         pid = await _resolve_project_id(client, project)
@@ -974,6 +982,7 @@ def register(mcp: FastMCP) -> None:
                 reminders=task.get("reminders"),
                 clear_reminders=task.get("clear_reminders", False),
                 timezone=task.get("timezone"),
+                sort_order=task.get("sort_order"),
             )
             edits.append(
                 {
